@@ -77,34 +77,10 @@ final class LocalInferenceEngine {
         }
 
         let prompt = buildPrompt(messages: messages)
-        let promptBytes = Array(prompt.utf8).map { CChar(bitPattern: $0) }
-
-        // 分词（两遍：先取所需长度，再填充）
-        var tokenCapacity = max(64, promptBytes.count + 32)
-        var tokens = [llama_token](repeating: 0, count: tokenCapacity)
-        var n = tokens.withUnsafeMutableBufferPointer { buf in
-            llama_tokenize(vocab, promptBytes, Int32(promptBytes.count), buf.baseAddress, Int32(tokenCapacity), true, true)
-        }
-        if n < 0 {
-            tokenCapacity = Int(-n)
-            tokens = [llama_token](repeating: 0, count: tokenCapacity)
-            n = tokens.withUnsafeMutableBufferPointer { buf in
-                llama_tokenize(vocab, promptBytes, Int32(promptBytes.count), buf.baseAddress, Int32(tokenCapacity), true, true)
-            }
-        }
-        guard n > 0 else { throw ChatError.inferenceFailed("分词失败") }
-        tokens = Array(tokens.prefix(Int(n)))
+        let tokens = try tokenize(prompt: prompt, vocab: vocab)
 
         // 解码 prompt
-        let tokenCount = tokens.count
-        var decodeFailed = false
-        tokens.withUnsafeMutableBufferPointer { buf in
-            let batch = llama_batch_get_one(buf.baseAddress, Int32(tokenCount))
-            if llama_decode(context, batch) != 0 {
-                decodeFailed = true
-            }
-        }
-        if decodeFailed {
+        if decodePrompt(tokens: tokens, context: context) != 0 {
             throw ChatError.inferenceFailed("prompt 解码失败")
         }
 
@@ -129,13 +105,42 @@ final class LocalInferenceEngine {
             }
 
             // 继续解码
-            var single = [newId]
-            let decodeRC = single.withUnsafeMutableBufferPointer { buf in
-                let b = llama_batch_get_one(buf.baseAddress, 1)
-                return llama_decode(context, b)
-            }
-            if decodeRC != 0 { break }
+            if decodeSingleToken(newId, context: context) != 0 { break }
         }
+    }
+
+    /// 分词：一次分配足够缓冲（token 数不会超过字节数），避免多次原地访问
+    private func tokenize(prompt: String, vocab: OpaquePointer) throws -> [llama_token] {
+        let promptBytes = Array(prompt.utf8).map { CChar(bitPattern: $0) }
+        let capacity = promptBytes.count + 64
+        var tokens = [llama_token](repeating: 0, count: capacity)
+        let n = tokens.withUnsafeMutableBufferPointer { buf in
+            llama_tokenize(vocab, promptBytes, Int32(promptBytes.count), buf.baseAddress, Int32(capacity), true, true)
+        }
+        guard n > 0 else { throw ChatError.inferenceFailed("分词失败") }
+        return Array(tokens.prefix(Int(n)))
+    }
+
+    /// 解码整段 prompt tokens
+    private func decodePrompt(tokens: [llama_token], context: OpaquePointer) -> Int32 {
+        let count = tokens.count
+        var rc: Int32 = 0
+        tokens.withUnsafeMutableBufferPointer { buf in
+            let batch = llama_batch_get_one(buf.baseAddress, Int32(count))
+            rc = llama_decode(context, batch)
+        }
+        return rc
+    }
+
+    /// 解码单个 token
+    private func decodeSingleToken(_ token: llama_token, context: OpaquePointer) -> Int32 {
+        var single = [token]
+        var rc: Int32 = 0
+        single.withUnsafeMutableBufferPointer { buf in
+            let batch = llama_batch_get_one(buf.baseAddress, 1)
+            rc = llama_decode(context, batch)
+        }
+        return rc
     }
 
     private func buildPrompt(messages: [ChatMessage]) -> String {
