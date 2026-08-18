@@ -1,0 +1,50 @@
+name: Build unsigned IPA
+
+# 没有 Mac 也能用：把本项目推到 GitHub，然后用此工作流在 GitHub 的
+# macOS 云主机上编译出未签名 IPA，再到 Actions 页面下载 artifact。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned archive
+        run: |
+          xcodebuild \
+            -project AIChatApp.xcodeproj \
+            -scheme AIChatApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath .build \
+            -archivePath build/AIChatApp.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            archive
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R build/AIChatApp.xcarchive/Products/Applications/AIChatApp.app build/Payload/
+          (cd build && zip -qry AIChatApp-unsigned.ipa Payload)
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIChatApp-unsigned
+          path: build/AIChatApp-unsigned.ipa
+          retention-days: 7
