@@ -4,9 +4,11 @@ struct ChatView: View {
     @EnvironmentObject var chatVM: ChatViewModel
     @EnvironmentObject var settingsVM: SettingsViewModel
     @EnvironmentObject var modelManager: LocalModelManager
+    @EnvironmentObject var store: ConversationStore
 
     @State private var showClearAlert = false
     @State private var showPDFShare = false
+    @State private var showConversations = false
     @State private var pdfURL: URL?
 
     private var activeModel: LocalModel? {
@@ -14,9 +16,13 @@ struct ChatView: View {
         return LocalModelCatalog.find(id: id)
     }
 
+    private var messages: [ChatMessage] {
+        store.current?.messages ?? []
+    }
+
     var body: some View {
         ZStack {
-            AppTheme.background.ignoresSafeArea()
+            AmbientBackground()
 
             VStack(spacing: 0) {
                 topBar
@@ -28,7 +34,7 @@ struct ChatView: View {
                 if let status = chatVM.statusMessage, chatVM.isGenerating {
                     statusBanner(status)
                 }
-                if chatVM.mode == .online {
+                if store.currentMode == .online {
                     deepThinkingBar
                 }
                 InputBar(text: $chatVM.inputText, isGenerating: chatVM.isGenerating) {
@@ -37,6 +43,10 @@ struct ChatView: View {
             }
         }
         .navigationBarHidden(true)
+        .sheet(isPresented: $showConversations) {
+            ConversationListView(isPresented: $showConversations)
+                .environmentObject(store)
+        }
         .sheet(isPresented: $showPDFShare) {
             if let url = pdfURL {
                 ShareSheet(items: [url])
@@ -46,18 +56,32 @@ struct ChatView: View {
             Button("取消", role: .cancel) {}
             Button("清空", role: .destructive) { chatVM.clearMessages() }
         } message: {
-            Text("确定要清空当前所有对话记录吗？此操作不可撤销。")
+            Text("确定要清空当前对话的全部记录吗？此操作不可撤销。")
         }
     }
 
     // MARK: - Top Bar
     private var topBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            // 对话列表
+            Button {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    showConversations = true
+                }
+            } label: {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(AppTheme.secondaryText)
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(AppTheme.surface))
+            }
+            .buttonStyle(BounceButtonStyle())
+
             ModeSwitcher(mode: Binding(
-                get: { chatVM.mode },
-                set: { chatVM.switchMode(to: $0) }
+                get: { store.current?.mode ?? .online },
+                set: { chatVM.setMode($0) }
             ))
-            .frame(maxWidth: 260)
+            .frame(maxWidth: 240)
 
             Spacer()
 
@@ -110,28 +134,33 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 4) {
-                    if chatVM.messages.isEmpty {
+                    if messages.isEmpty {
                         emptyState
                     }
-                    ForEach(chatVM.messages) { msg in
+                    ForEach(messages) { msg in
                         MessageBubble(message: msg)
                             .id(msg.id)
+                            .transition(.asymmetric(
+                                insertion: .move(edge: msg.role == .user ? .trailing : .leading)
+                                    .combined(with: .opacity),
+                                removal: .opacity
+                            ))
                     }
                 }
                 .padding(.vertical, 12)
             }
             .scrollDismissesKeyboard(.immediately)
-            .onChange(of: chatVM.messages.count) { _ in
+            .onChange(of: messages.count) { _ in
                 scrollToBottom(proxy)
             }
-            .onChange(of: chatVM.messages.last?.content) { _ in
+            .onChange(of: messages.last?.content) { _ in
                 scrollToBottom(proxy)
             }
         }
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        guard let last = chatVM.messages.last else { return }
+        guard let last = messages.last else { return }
         withAnimation(.easeOut(duration: 0.2)) {
             proxy.scrollTo(last.id, anchor: .bottom)
         }
@@ -148,11 +177,11 @@ struct ChatView: View {
                     .font(.system(size: 36, weight: .light))
                     .foregroundColor(AppTheme.accent)
             }
-            Text(chatVM.mode == .online ? "开始你的 AI 对话" : "离线模式已就绪")
+            Text(store.currentMode == .online ? "开始你的 AI 对话" : "离线模式已就绪")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(AppTheme.primaryText)
-            Text(chatVM.mode == .online
-                 ? "支持联网搜索、图片生成、语音合成等能力"
+            Text(store.currentMode == .online
+                 ? "支持联网搜索、图片生成、天气、网页摘要等能力"
                  : "所有推理在本地完成，隐私无忧")
                 .font(.system(size: 14))
                 .foregroundColor(AppTheme.secondaryText)
