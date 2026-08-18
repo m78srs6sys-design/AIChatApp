@@ -164,7 +164,7 @@ final class ChatViewModel: ObservableObject {
                 onToken: { [weak self] token in
                     guard let self else { return }
                     raw += token
-                    self.setDisplay(aiId, cleaned: Self.stripCallTags(raw))
+                    self.setDisplay(to: aiId, cleaned: Self.stripCallTags(raw))
                 },
                 onReasoning: { [weak self] token in
                     self?.appendReasoning(to: aiId, token: token)
@@ -193,7 +193,7 @@ final class ChatViewModel: ObservableObject {
                             onToken: { [weak self] token in
                                 guard let self else { return }
                                 raw2 += token
-                                self.setDisplay(aiId, cleaned: Self.stripCallTags(raw2))
+                                self.setDisplay(to: aiId, cleaned: Self.stripCallTags(raw2))
                             },
                             onReasoning: { [weak self] token in
                                 self?.appendReasoning(to: aiId, token: token)
