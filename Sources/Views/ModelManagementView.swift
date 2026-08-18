@@ -115,7 +115,7 @@ struct ModelManagementView: View {
                             .frame(width: 40, height: 40)
                             .background(Circle().fill(AppTheme.surfaceElevated))
                     }
-                    .buttonStyle(BounceButtonStyle)
+                    .buttonStyle(BounceButtonStyle())
                 }
             }
 
