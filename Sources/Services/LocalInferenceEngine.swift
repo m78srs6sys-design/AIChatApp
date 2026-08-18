@@ -123,9 +123,10 @@ final class LocalInferenceEngine {
 
     /// 解码整段 prompt tokens
     private func decodePrompt(tokens: [llama_token], context: OpaquePointer) -> Int32 {
-        let count = tokens.count
+        var localTokens = tokens
+        let count = localTokens.count
         var rc: Int32 = 0
-        tokens.withUnsafeMutableBufferPointer { buf in
+        localTokens.withUnsafeMutableBufferPointer { buf in
             let batch = llama_batch_get_one(buf.baseAddress, Int32(count))
             rc = llama_decode(context, batch)
         }
