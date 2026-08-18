@@ -60,7 +60,15 @@ final class OnlineChatEngine {
     private func buildURL(settings: APISettings) -> String {
         var base = settings.apiURL.trimmingCharacters(in: .whitespaces)
         if base.hasSuffix("/") { base.removeLast() }
-        return base + settings.engine.endpoint
+
+        // 兼容用户填写的不同地址格式，避免路径重复拼接
+        if base.hasSuffix("/chat/completions") {
+            return base
+        }
+        if base.hasSuffix("/v1") {
+            return base + "/chat/completions"
+        }
+        return base + "/v1/chat/completions"
     }
 
     private func buildBody(messages: [ChatMessage], settings: APISettings) -> [String: Any] {
