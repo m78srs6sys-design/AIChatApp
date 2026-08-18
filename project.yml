@@ -41,6 +41,8 @@ targets:
     dependencies:
       - package: LlamaCpp
         product: LlamaCpp
+      - target: AIChatAppWidget
+        embed: true
 
     # 直接使用自定义 Info.plist（含权限描述、ATS、深色主题等关键键）
     # 注意：不要用 XcodeGen 的 info: 生成，否则会覆盖丢失这些键
@@ -56,3 +58,29 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         # 保留完整调试符号，便于后续自己重签名/调试
         DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+
+  # Live Activity 小组件扩展（模型下载实时进度：锁屏 + 灵动岛）
+  AIChatAppWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.1"
+
+    sources:
+      - path: Widget
+      - path: Sources/Models/ModelDownloadAttributes.swift
+
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+      - sdk: ActivityKit.framework
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aichat.app.widget
+        PRODUCT_NAME: AIChatAppWidget
+        INFOPLIST_FILE: Widget/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+        SWIFT_VERSION: "5.9"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.1"
