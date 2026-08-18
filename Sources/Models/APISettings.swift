@@ -5,27 +5,43 @@ struct APISettings: Codable {
     var apiURL: String
     var apiKey: String
     var modelName: String
-    var engine: APIEngine       // 引擎选择
-    var deepThinking: Bool      // 深度思考开关
-    var ttsEnabled: Bool        // 语音合成自动播放
+    var engine: APIEngine            // 引擎选择
+    var deepThinking: Bool           // 深度思考开关
+    var deepThinkingField: DeepThinkingField  // 深度思考字段类型（兼容不同服务商）
+    var ttsEnabled: Bool             // 语音合成自动播放
 
     init(apiURL: String = "",
          apiKey: String = "",
          modelName: String = "gpt-4o-mini",
          engine: APIEngine = .openAICompatible,
          deepThinking: Bool = false,
+         deepThinkingField: DeepThinkingField = .thinkingEnabled,
          ttsEnabled: Bool = false) {
         self.apiURL = apiURL
         self.apiKey = apiKey
         self.modelName = modelName
         self.engine = engine
         self.deepThinking = deepThinking
+        self.deepThinkingField = deepThinkingField
         self.ttsEnabled = ttsEnabled
     }
 
     var isConfigured: Bool {
         !apiURL.trimmingCharacters(in: .whitespaces).isEmpty &&
         !apiKey.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+}
+
+/// 深度思考字段类型（不同服务商字段名不同，避免硬写死导致 400）
+enum DeepThinkingField: String, Codable, CaseIterable {
+    case thinkingEnabled
+    case reasoningEffort
+
+    var displayName: String {
+        switch self {
+        case .thinkingEnabled: return "thinking_enabled（国产兼容）"
+        case .reasoningEffort: return "reasoning_effort（OpenAI）"
+        }
     }
 }
 
@@ -92,12 +108,12 @@ enum LocalModelCatalog {
             contextLength: 4096
         ),
         LocalModel(
-            id: "qwen3-2b",
-            name: "Qwen3-2B",
-            detail: "通义千问 3 · 更强推理能力",
-            sizeText: "约 1.5 GB",
-            downloadURL: "https://hf-mirror.com/Qwen/Qwen3-2B-GGUF/resolve/main/qwen3-2b-q4_k_m.gguf",
-            filename: "qwen3-2b-q4_k_m.gguf",
+            id: "qwen2.5-7b-instruct",
+            name: "Qwen2.5-7B-Instruct",
+            detail: "通义千问 2.5 · 7B 更大更强",
+            sizeText: "约 4.7 GB",
+            downloadURL: "https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
+            filename: "qwen2.5-7b-instruct-q4_k_m.gguf",
             contextLength: 8192
         )
     ]
