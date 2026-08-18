@@ -34,7 +34,7 @@ final class LocalInferenceEngine {
 
             var ctxParams = llama_context_default_params()
             ctxParams.n_ctx = UInt32(contextLength)
-            ctxParams.n_threads = UInt32(max(1, ProcessInfo.processInfo.activeProcessorCount - 1))
+            ctxParams.n_threads = Int32(max(1, ProcessInfo.processInfo.activeProcessorCount - 1))
             ctxParams.n_threads_batch = ctxParams.n_threads
 
             guard let ctx = llama_init_from_model(loadedModel, ctxParams) else {
@@ -66,16 +66,20 @@ final class LocalInferenceEngine {
         }
 
         let prompt = buildPrompt(messages: messages)
-        let promptBytes = Array(prompt.utf8)
+        let promptBytes = Array(prompt.utf8).map { CChar(bitPattern: $0) }
 
         // 分词（两遍：先取所需长度，再填充）
         var tokenCapacity = max(64, promptBytes.count + 32)
         var tokens = [llama_token](repeating: 0, count: tokenCapacity)
-        var n = llama_tokenize(vocab, promptBytes, Int32(promptBytes.count), &tokens, Int32(tokenCapacity), true, true)
+        var n = tokens.withUnsafeMutableBufferPointer { buf in
+            llama_tokenize(vocab, promptBytes, Int32(promptBytes.count), buf.baseAddress, Int32(tokenCapacity), true, true)
+        }
         if n < 0 {
             tokenCapacity = Int(-n)
             tokens = [llama_token](repeating: 0, count: tokenCapacity)
-            n = llama_tokenize(vocab, promptBytes, Int32(promptBytes.count), &tokens, Int32(tokenCapacity), true, true)
+            n = tokens.withUnsafeMutableBufferPointer { buf in
+                llama_tokenize(vocab, promptBytes, Int32(promptBytes.count), buf.baseAddress, Int32(tokenCapacity), true, true)
+            }
         }
         guard n > 0 else { throw ChatError.inferenceFailed("分词失败") }
         tokens = Array(tokens.prefix(Int(n)))
