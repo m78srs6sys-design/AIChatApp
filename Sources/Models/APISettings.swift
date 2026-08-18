@@ -8,7 +8,9 @@ struct APISettings: Codable {
     var engine: APIEngine            // 引擎选择
     var deepThinking: Bool           // 深度思考开关
     var deepThinkingField: DeepThinkingField  // 深度思考字段类型（兼容不同服务商）
+    var onlineFeaturesEnabled: Bool  // 是否允许 AI 主动调用联网附加功能
     var ttsEnabled: Bool             // 语音合成自动播放
+    var hapticPerChar: Bool          // 生成每个字震动一次
 
     init(apiURL: String = "",
          apiKey: String = "",
@@ -16,14 +18,18 @@ struct APISettings: Codable {
          engine: APIEngine = .openAICompatible,
          deepThinking: Bool = false,
          deepThinkingField: DeepThinkingField = .thinkingEnabled,
-         ttsEnabled: Bool = false) {
+         onlineFeaturesEnabled: Bool = true,
+         ttsEnabled: Bool = false,
+         hapticPerChar: Bool = false) {
         self.apiURL = apiURL
         self.apiKey = apiKey
         self.modelName = modelName
         self.engine = engine
         self.deepThinking = deepThinking
         self.deepThinkingField = deepThinkingField
+        self.onlineFeaturesEnabled = onlineFeaturesEnabled
         self.ttsEnabled = ttsEnabled
+        self.hapticPerChar = hapticPerChar
     }
 
     var isConfigured: Bool {
