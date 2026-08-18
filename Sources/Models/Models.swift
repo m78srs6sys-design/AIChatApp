@@ -66,16 +66,19 @@ struct ChatMessage: Identifiable, Codable, Hashable {
     var content: String
     var isStreaming: Bool
     var attachments: [MessageAttachment]
+    /// 深度思考过程（reasoning_content），可展开/收起的小字
+    var reasoning: String
     let timestamp: Date
 
     init(id: UUID = UUID(), role: MessageRole, content: String,
          isStreaming: Bool = false, attachments: [MessageAttachment] = [],
-         timestamp: Date = Date()) {
+         reasoning: String = "", timestamp: Date = Date()) {
         self.id = id
         self.role = role
         self.content = content
         self.isStreaming = isStreaming
         self.attachments = attachments
+        self.reasoning = reasoning
         self.timestamp = timestamp
     }
 }
