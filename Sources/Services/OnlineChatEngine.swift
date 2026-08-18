@@ -46,11 +46,12 @@ final class OnlineChatEngine {
         }
         guard (200..<300).contains(http.statusCode) else {
             // 读取错误响应体，给用户更明确的提示
-            var errorBody = ""
-            for try await chunk in bytes {
-                errorBody += String(data: chunk, encoding: .utf8) ?? ""
-                if errorBody.count > 2000 { break }
+            var errorData = Data()
+            for try await byte in bytes {
+                errorData.append(byte)
+                if errorData.count > 2000 { break }
             }
+            let errorBody = String(data: errorData, encoding: .utf8) ?? ""
             throw ChatError.http(status: http.statusCode, body: errorBody)
         }
 
