@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 单条消息气泡：用户(右·亮色) / AI(左·深色磨砂)
 struct MessageBubble: View {
@@ -23,6 +24,15 @@ struct MessageBubble: View {
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
                 bubbleContent
                 attachmentViews
+            }
+            .contextMenu {
+                if !message.content.isEmpty {
+                    Button {
+                        UIPasteboard.general.string = message.content
+                    } label: {
+                        Label("复制内容", systemImage: "doc.on.doc")
+                    }
+                }
             }
 
             if message.role == .assistant {
