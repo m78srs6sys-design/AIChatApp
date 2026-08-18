@@ -13,6 +13,7 @@ final class ChatViewModel: ObservableObject {
     @Published var isPlayingAudio: Bool = false
 
     private let onlineEngine = OnlineChatEngine()
+    private let localEngine = LocalInferenceEngine.shared
     private let skillService = OnlineSkillService.shared
     private var cancellables = Set<AnyCancellable>()
 
@@ -129,10 +130,50 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Offline Flow（当前版本未包含本地推理引擎）
+    // MARK: - Offline Flow
     private func runOffline(activeModel: LocalModel?) async {
-        _ = activeModel
-        errorMessage = "离线模式暂不可用：当前版本仅支持联网对话，请在设置中配置 API 后使用联网模式。"
+        guard let model = activeModel else {
+            errorMessage = ChatError.noActiveModel.errorDescription
+            return
+        }
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("LocalModels", isDirectory: true)
+        let path = dir.appendingPathComponent(model.filename)
+        guard FileManager.default.fileExists(atPath: path.path) else {
+            errorMessage = "模型文件不存在，请先在「本地模型管理」中下载"
+            return
+        }
+
+        do {
+            try localEngine.loadModel(at: path.path, contextLength: model.contextLength)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        let aiMsg = ChatMessage(role: .assistant, content: "", isStreaming: true)
+        messages.append(aiMsg)
+        persist()
+
+        do {
+            try await localEngine.streamInfer(messages: messages.filter { $0.role != .assistant || $0.id == aiMsg.id }) { [weak self] token in
+                guard let self else { return }
+                if let idx = self.messages.lastIndex(where: { $0.id == aiMsg.id }) {
+                    self.messages[idx].content += token
+                }
+            }
+            if let idx = messages.lastIndex(where: { $0.id == aiMsg.id }) {
+                messages[idx].isStreaming = false
+            }
+            persist()
+        } catch {
+            errorMessage = error.localizedDescription
+            if let idx = messages.lastIndex(where: { $0.id == aiMsg.id }) {
+                messages[idx].content = "（推理失败：\(error.localizedDescription)）"
+                messages[idx].isStreaming = false
+            }
+            persist()
+        }
     }
 
     // MARK: - TTS
