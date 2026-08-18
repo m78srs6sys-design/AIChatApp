@@ -1,5 +1,5 @@
 import Foundation
-import LlamaCpp
+import llama
 
 /// 本地离线推理引擎：封装 llama.cpp C API
 /// 所有推理在设备本地完成，无需联网
