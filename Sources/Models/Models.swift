@@ -32,12 +32,31 @@ enum MessageAttachment: Codable, Hashable {
     case image(url: String)
     case location(latitude: Double, longitude: Double, name: String)
     case searchResults([SearchResultItem])
+    case weather(WeatherInfo)
+    case webpage(WebpageSummary)
 }
 
 struct SearchResultItem: Codable, Hashable {
     let title: String
     let url: String
     let snippet: String?
+}
+
+/// 天气信息（open-meteo 免密钥接口）
+struct WeatherInfo: Codable, Hashable {
+    let city: String
+    let temperature: Double
+    let condition: String
+    let humidity: Int?
+    let windSpeed: Double?
+    let units: String
+}
+
+/// 网页摘要（直连抓取后裁剪的正文）
+struct WebpageSummary: Codable, Hashable {
+    let url: String
+    let title: String
+    let summary: String
 }
 
 /// 单条对话消息
