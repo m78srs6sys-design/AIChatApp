@@ -87,7 +87,20 @@ struct SettingsView: View {
                     }
                     .buttonStyle(BounceButtonStyle())
 
-                    Text("提示：联网功能（搜索、图片生成、语音合成）通过云端函数调用，需配置后端服务。")
+                    // iCloud 同步状态提示
+                    HStack(spacing: 6) {
+                        Image(systemName: ICloudSettingsStore.isUsingiCloud ? "icloud.fill" : "icloud.slash")
+                            .font(.system(size: 12))
+                        Text(ICloudSettingsStore.isUsingiCloud
+                             ? "设置已同步至 iCloud：卸载重装后自动恢复"
+                             : "iCloud 不可用，设置仅保存在本机（重装需重填）")
+                            .font(.system(size: 12))
+                    }
+                    .foregroundColor(ICloudSettingsStore.isUsingiCloud ? AppTheme.success : AppTheme.warning)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 8)
+
+                    Text("联网功能（搜索 / 图片生成 / 天气 / 网页摘要）已内置，使用公开免密钥接口，无需配置任何后端。")
                         .font(.system(size: 12))
                         .foregroundColor(AppTheme.tertiaryText)
                         .multilineTextAlignment(.center)
