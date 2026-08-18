@@ -94,7 +94,7 @@ final class OnlineChatEngine {
         }
 
         var body: [String: Any] = [
-            "model": settings.modelName,
+            "model": settings.modelName.trimmingCharacters(in: .whitespacesAndNewlines),
             "messages": history,
             "stream": true,
             "temperature": 0.7,
@@ -150,7 +150,7 @@ enum ChatError: LocalizedError {
             // 优先根据服务器错误码给具体提示
             let codeHint: String?
             switch serverCode {
-            case "model_not_found": codeHint = "模型不存在：在设置里检查「模型名称」，可能填了过期的模型 ID 或部署被删除"
+            case "model_not_found": codeHint = "模型不存在：请到百炼控制台确认「模型名称」，应填部署对应的模型名（如 qwen-plus），而不是部署实例 ID（UUID）"
             case "invalid_api_key": codeHint = "API 密钥无效：在设置里检查「API 密钥」"
             case "insufficient_quota": codeHint = "账号额度不足"
             case "context_length_exceeded": codeHint = "上下文超出模型最大长度"
