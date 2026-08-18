@@ -93,18 +93,18 @@ struct ModelManagementView: View {
                 switch state.status {
                 case .idle, .failed:
                     Button("下载") { modelManager.startDownload(model) }
-                        .buttonStyle(primaryAction)
+                        .buttonStyle(PrimaryActionButtonStyle())
                 case .downloading:
                     Button("暂停") { modelManager.pauseDownload(model) }
-                        .buttonStyle(secondaryAction)
+                        .buttonStyle(SecondaryActionButtonStyle())
                 case .paused:
                     Button("继续") { modelManager.startDownload(model) }
-                        .buttonStyle(primaryAction)
+                        .buttonStyle(PrimaryActionButtonStyle())
                 case .completed:
                     Button(isActive ? "已选择" : "使用此模型") {
                         modelManager.setActive(model)
                     }
-                    .buttonStyle(isActive ? secondaryAction : primaryAction)
+                    .buttonStyle(isActive ? AnyButtonStyle(SecondaryActionButtonStyle()) : AnyButtonStyle(PrimaryActionButtonStyle()))
                     .disabled(isActive)
                     Spacer()
                     Button {
