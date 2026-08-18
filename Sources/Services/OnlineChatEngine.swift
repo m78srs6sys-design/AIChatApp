@@ -33,9 +33,25 @@ final class OnlineChatEngine {
         let body = buildBody(messages: messages, settings: settings)
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw ChatError.requestFailed
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: request)
+        } catch let urlError as URLError {
+            throw ChatError.network(urlError.localizedDescription)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw ChatError.network("无法解析服务器响应")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            // 读取错误响应体，给用户更明确的提示
+            var errorBody = ""
+            for try await chunk in bytes {
+                errorBody += String(data: chunk, encoding: .utf8) ?? ""
+                if errorBody.count > 2000 { break }
+            }
+            throw ChatError.http(status: http.statusCode, body: errorBody)
         }
 
         // 解析 SSE 流
@@ -104,6 +120,8 @@ enum ChatError: LocalizedError {
     case requestFailed
     case noActiveModel
     case inferenceFailed(String)
+    case network(String)
+    case http(status: Int, body: String)
 
     var errorDescription: String? {
         switch self {
@@ -112,6 +130,19 @@ enum ChatError: LocalizedError {
         case .requestFailed: return "请求失败，请检查网络或接口配置"
         case .noActiveModel: return "请先下载并选择本地模型"
         case .inferenceFailed(let msg): return "本地推理失败：\(msg)"
+        case .network(let msg): return "网络错误：\(msg)"
+        case .http(let status, let body):
+            let hint: String
+            switch status {
+            case 400: hint = "参数错误（可能是模型名或深度思考字段不匹配）"
+            case 401: hint = "API 密钥无效或未授权"
+            case 403: hint = "无访问权限（检查 Key 是否有该接口权限）"
+            case 404: hint = "接口路径不存在（检查接口地址）"
+            case 429: hint = "请求过于频繁或额度不足"
+            default: hint = "服务器返回错误"
+            }
+            let detail = body.isEmpty ? "" : " · \(body.prefix(200))"
+            return "请求失败（HTTP \(status)）：\(hint)\(detail)"
         }
     }
 }
