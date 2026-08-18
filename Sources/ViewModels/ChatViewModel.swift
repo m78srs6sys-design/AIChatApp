@@ -107,7 +107,7 @@ final class ChatViewModel: ObservableObject {
         persist()
 
         do {
-            try await onlineEngine.streamChat(messages: messages.filter { !$0.isStreaming || $0.id == aiMsg.id },
+            try await onlineEngine.streamChat(messages: messages.filter { !$0.isStreaming },
                                               settings: settings) { [weak self] token in
                 guard let self else { return }
                 if let idx = self.messages.lastIndex(where: { $0.id == aiMsg.id }) {
@@ -162,7 +162,7 @@ final class ChatViewModel: ObservableObject {
         persist()
 
         do {
-            try await localEngine.streamInfer(messages: messages.filter { $0.role != .assistant || $0.id == aiMsg.id }) { [weak self] token in
+            try await localEngine.streamInfer(messages: messages.filter { $0.id != aiMsg.id }) { [weak self] token in
                 guard let self else { return }
                 if let idx = self.messages.lastIndex(where: { $0.id == aiMsg.id }) {
                     self.messages[idx].content += token
