@@ -11,6 +11,12 @@ struct ChatView: View {
     @State private var showConversations = false
     @State private var pdfURL: URL?
 
+    // 语音输入开关
+    @State private var voiceMode: Bool = false
+    // 多选删除模式
+    @State private var selectionMode: Bool = false
+    @State private var selectedIDs: Set<UUID> = []
+
     private var activeModel: LocalModel? {
         guard let id = modelManager.activeModelId else { return nil }
         return LocalModelCatalog.find(id: id)
@@ -37,7 +43,13 @@ struct ChatView: View {
                 if store.currentMode == .online {
                     deepThinkingBar
                 }
-                InputBar(text: $chatVM.inputText, isGenerating: chatVM.isGenerating) {
+                // 语音输入切换（输入框上方）
+                voiceToggleRow
+                if selectionMode {
+                    selectionBar
+                }
+                InputBar(text: $chatVM.inputText, voiceMode: $voiceMode,
+                         isGenerating: chatVM.isGenerating) {
                     chatVM.send(settings: settingsVM.settings, activeModel: activeModel)
                 }
             }
@@ -138,18 +150,27 @@ struct ChatView: View {
                         emptyState
                     }
                     ForEach(messages) { msg in
-                        MessageBubble(message: msg)
-                            .id(msg.id)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: msg.role == .user ? .trailing : .leading)
-                                    .combined(with: .opacity),
-                                removal: .opacity
-                            ))
+                        MessageBubble(
+                            message: msg,
+                            isSelectionMode: selectionMode,
+                            isSelected: selectedIDs.contains(msg.id)
+                        ) {
+                            toggleSelect(msg.id)
+                        } onDeleteRequested: {
+                            enterSelectionMode(preselect: msg.id)
+                        }
+                        .id(msg.id)
                     }
                 }
                 .padding(.vertical, 12)
             }
             .scrollDismissesKeyboard(.immediately)
+            .onAppear {
+                // 打开 App 自动滑到最近对话最底部
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    scrollToBottom(proxy)
+                }
+            }
             .onChange(of: messages.count) { _ in
                 scrollToBottom(proxy)
             }
@@ -207,9 +228,9 @@ struct ChatView: View {
         .background(AppTheme.surface.opacity(0.6))
     }
 
-    // MARK: - Deep Thinking Bar
+    // MARK: - Deep Thinking + 联网功能开关
     private var deepThinkingBar: some View {
-        HStack {
+        HStack(spacing: 8) {
             Button {
                 settingsVM.settings.deepThinking.toggle()
                 settingsVM.save()
@@ -229,11 +250,115 @@ struct ChatView: View {
             }
             .buttonStyle(BounceButtonStyle())
 
+            Button {
+                settingsVM.settings.onlineFeaturesEnabled.toggle()
+                settingsVM.save()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: settingsVM.settings.onlineFeaturesEnabled ? "network" : "network.slash")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("联网功能")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(settingsVM.settings.onlineFeaturesEnabled ? AppTheme.accent : AppTheme.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(settingsVM.settings.onlineFeaturesEnabled ? AppTheme.accent.opacity(0.16) : AppTheme.surface)
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
+            }
+            .buttonStyle(BounceButtonStyle())
+
             Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .padding(.bottom, 2)
+    }
+
+    // MARK: - 语音输入切换（输入框上方）
+    private var voiceToggleRow: some View {
+        HStack {
+            Spacer()
+            Button {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    voiceMode.toggle()
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: voiceMode ? "mic.fill" : "mic")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(voiceMode ? "语音输入已开启（长按说话）" : "语音输入")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(voiceMode ? AppTheme.accent : AppTheme.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(voiceMode ? AppTheme.accent.opacity(0.16) : AppTheme.surface)
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
+            }
+            .buttonStyle(BounceButtonStyle())
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
+    }
+
+    // MARK: - 多选删除工具条
+    private var selectionBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    selectionMode = false
+                    selectedIDs.removeAll()
+                }
+            } label: {
+                Text("取消")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppTheme.secondaryText)
+            }
+            Spacer()
+            Text("已选 \(selectedIDs.count) 条")
+                .font(.system(size: 13))
+                .foregroundColor(AppTheme.secondaryText)
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    chatVM.deleteMessages(ids: selectedIDs)
+                    selectionMode = false
+                    selectedIDs.removeAll()
+                }
+            } label: {
+                Text("删除")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 8)
+                    .background(AppTheme.error)
+                    .clipShape(Capsule())
+            }
+            .disabled(selectedIDs.isEmpty)
+            .opacity(selectedIDs.isEmpty ? 0.5 : 1)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(AppTheme.surface.opacity(0.9))
+    }
+
+    // MARK: - 多选逻辑
+    private func toggleSelect(_ id: UUID) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    private func enterSelectionMode(preselect: UUID? = nil) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            selectionMode = true
+            selectedIDs = preselect.map { [$0] } ?? []
+        }
     }
 
     // MARK: - Error Banner
