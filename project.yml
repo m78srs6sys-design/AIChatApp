@@ -22,6 +22,12 @@ settings:
     CODE_SIGNING_REQUIRED: "NO"
     CODE_SIGN_IDENTITY: ""
 
+packages:
+  # 本地离线推理：llama.cpp 的 iOS 预编译 XCFramework（SwiftPM 二进制包）
+  LlamaCpp:
+    url: https://github.com/saitawngpha/llama-ios.git
+    branch: main
+
 targets:
   AIChatApp:
     type: application
@@ -32,8 +38,9 @@ targets:
       - path: Sources
       - path: SupportingFiles/Assets.xcassets
 
-    # 注：本地离线推理（llama.cpp）依赖已移除，当前为「仅联网对话」版本。
-    # 无任何第三方 SPM 依赖，编译更稳定。
+    dependencies:
+      - package: LlamaCpp
+        product: LlamaCpp
 
     # 直接使用自定义 Info.plist（含权限描述、ATS、深色主题等关键键）
     # 注意：不要用 XcodeGen 的 info: 生成，否则会覆盖丢失这些键
