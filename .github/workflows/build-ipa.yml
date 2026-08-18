@@ -15,16 +15,17 @@ jobs:
 
       - name: Generate Xcode project
         run: |
-          xcodegen generate > gen.log 2>&1
-          echo "EXIT=$?" >> gen.log
-          echo "--- ls root ---" >> gen.log
-          ls -la >> gen.log
-          echo "--- ls AIChatApp.xcodeproj ---" >> gen.log
-          ls -la AIChatApp.xcodeproj >> gen.log 2>&1
-          echo "--- pbxproj size ---" >> gen.log
-          wc -c AIChatApp.xcodeproj/project.pbxproj >> gen.log 2>&1
-          cat gen.log
-          while IFS= read -r line; do echo "::error::GEN|${line}"; done < gen.log
+          {
+            echo "XCODEBUILD_VERSION=$(xcodebuild -version 2>&1 | tr '\n' ' ')"
+            echo "XCODEGEN_VERSION=$(xcodegen --version 2>&1 | head -1)"
+            echo "XCODE_SELECT=$(xcode-select -p 2>&1)"
+            xcodegen generate > gen.log 2>&1
+            echo "XCODEGEN_EXIT=$?"
+            echo "PBPROJ_EXISTS=$(test -f AIChatApp.xcodeproj/project.pbxproj && echo yes || echo no)"
+            echo "PBPROJ_SIZE=$(wc -c < AIChatApp.xcodeproj/project.pbxproj 2>/dev/null || echo 0)"
+            echo "PBPROJ_HEAD=$(head -c 150 AIChatApp.xcodeproj/project.pbxproj 2>/dev/null | tr '\n' ' ')"
+            echo "XCODEGEN_OUT=$(cat gen.log | tr '\n' ' ' | head -c 300)"
+          } | while IFS= read -r line; do echo "::error::D|${line}"; done
 
       - name: Build unsigned archive
         id: build
