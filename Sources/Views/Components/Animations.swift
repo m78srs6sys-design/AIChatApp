@@ -52,3 +52,27 @@ struct BounceButtonStyle: ButtonStyle {
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
+
+/// 背景流动光晕（缓慢呼吸，提升质感）
+struct AmbientBackground: View {
+    @State private var move = false
+
+    var body: some View {
+        LinearGradient(
+            colors: [
+                AppTheme.background,
+                AppTheme.background.opacity(0.55),
+                AppTheme.accent.opacity(0.10),
+                AppTheme.background
+            ],
+            startPoint: move ? .topLeading : .bottomTrailing,
+            endPoint: move ? .bottomTrailing : .topLeading
+        )
+        .ignoresSafeArea()
+        .onAppear {
+            withAnimation(.easeInOut(duration: 9).repeatForever(autoreverses: true)) {
+                move.toggle()
+            }
+        }
+    }
+}
