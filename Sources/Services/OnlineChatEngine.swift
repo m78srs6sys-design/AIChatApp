@@ -1,6 +1,6 @@
 import Foundation
 
-/// OpenAI 兼容 / MiniMax 流式对话引擎
+/// OpenAI 兼容流式对话引擎
 /// 通过标准 chat/completions 协议进行流式输出
 final class OnlineChatEngine {
     private let session: URLSession
@@ -77,12 +77,7 @@ final class OnlineChatEngine {
 
         // 深度思考：携带推理参数
         if settings.deepThinking {
-            switch settings.engine {
-            case .openAICompatible:
-                body["reasoning_effort"] = "high"
-            case .minimax:
-                body["reasoning"] = true
-            }
+            body["reasoning_effort"] = "high"
         }
 
         return body
