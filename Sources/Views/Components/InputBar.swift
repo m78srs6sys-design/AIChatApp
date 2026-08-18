@@ -8,17 +8,17 @@ struct InputBar: View {
 
     @FocusState private var isFocused: Bool
 
-    private let minHeight: CGFloat = 52
-    private let maxHeight: CGFloat = 140
+    private let minHeight: CGFloat = 40
+    private let maxHeight: CGFloat = 100
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
             // 自适应高度文本框
             ZStack(alignment: .topLeading) {
                 Text(text.isEmpty ? " " : text)
-                    .font(.system(size: 16))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 16)
+                    .font(.system(size: 15))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
                     .background(GeometryReader { proxy in
                         Color.clear.preference(key: TextHeightKey.self, value: proxy.size.height)
                     })
@@ -26,11 +26,11 @@ struct InputBar: View {
 
                 TextField("", text: $text, axis: .vertical)
                     .focused($isFocused)
-                    .font(.system(size: 16))
+                    .font(.system(size: 15))
                     .foregroundColor(AppTheme.primaryText)
-                    .lineLimit(1...6)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
+                    .lineLimit(1...5)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
                     .frame(minHeight: minHeight, maxHeight: maxHeight)
                     .background(AppTheme.surfaceElevated)
                     .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadius, style: .continuous))
@@ -43,9 +43,9 @@ struct InputBar: View {
             // 发送按钮
             Button(action: onSend) {
                 Image(systemName: isGenerating ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.system(size: 16, weight: .bold))
                     .foregroundColor(AppTheme.userBubbleText)
-                    .frame(width: 52, height: 52)
+                    .frame(width: 40, height: 40)
                     .background(
                         Circle()
                             .fill(canSend ? AppTheme.accent : AppTheme.surfaceElevated)
@@ -58,7 +58,8 @@ struct InputBar: View {
             .disabled(!canSend && !isGenerating)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 8)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
     }
 
     private var canSend: Bool {
