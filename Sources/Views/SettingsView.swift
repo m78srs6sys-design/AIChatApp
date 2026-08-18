@@ -33,6 +33,16 @@ struct SettingsView: View {
                             settingField(title: "API 密钥", placeholder: "sk-...", text: $settingsVM.settings.apiKey, secure: true)
                             settingField(title: "模型名称", placeholder: "gpt-4o-mini", text: $settingsVM.settings.modelName)
 
+                            // 模型名填写提示（百炼/通义常见坑：连字符 vs 点号）
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: "info.circle")
+                                    .font(.system(size: 11))
+                                Text("百炼/通义模型名用「连字符」，如 qwen3-8b、qwen-plus；不要写成 qwen3.8（点号会报 model_not_found）。")
+                                    .font(.system(size: 11))
+                            }
+                            .foregroundColor(AppTheme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("深度思考字段类型")
                                     .font(.system(size: 13, weight: .medium))
