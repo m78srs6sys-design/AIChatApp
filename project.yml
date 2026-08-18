@@ -1,0 +1,55 @@
+# AIChatApp — XcodeGen 工程描述文件
+# 用法（在 macOS 上）：xcodegen generate
+# 即可生成 AIChatApp.xcodeproj，然后运行 ./build_ipa.sh 编译出未签名 IPA
+name: AIChatApp
+
+options:
+  bundleIdPrefix: com.aichat
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    # 未签名编译相关，构建脚本里还会再显式传一次
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGN_IDENTITY: ""
+
+packages:
+  # 本地离线推理依赖：llama.cpp 的 Swift 绑定
+  llama.cpp:
+    url: https://github.com/ggerganov/llama.cpp.git
+    branch: master
+
+targets:
+  AIChatApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+
+    sources:
+      - path: Sources
+      - path: SupportingFiles/Assets.xcassets
+
+    dependencies:
+      - package: llama.cpp
+        product: llama
+
+    info:
+      # 直接引用完整、规范的 Info.plist（已补全 CFBundleExecutable 等必需键）
+      path: SupportingFiles/Info.plist
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aichat.app
+        PRODUCT_NAME: AIChatApp
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # 保留完整调试符号，便于后续自己重签名/调试
+        DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
