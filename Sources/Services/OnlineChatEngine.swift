@@ -52,7 +52,12 @@ final class OnlineChatEngine {
                 if errorData.count > 2000 { break }
             }
             let errorBody = String(data: errorData, encoding: .utf8) ?? ""
-            throw ChatError.http(status: http.statusCode, body: errorBody)
+            throw ChatError.http(
+                status: http.statusCode,
+                body: errorBody,
+                url: urlString,
+                model: settings.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         }
 
         // 解析 SSE 流
@@ -122,7 +127,7 @@ enum ChatError: LocalizedError {
     case noActiveModel
     case inferenceFailed(String)
     case network(String)
-    case http(status: Int, body: String)
+    case http(status: Int, body: String, url: String, model: String)
 
     var errorDescription: String? {
         switch self {
@@ -132,7 +137,7 @@ enum ChatError: LocalizedError {
         case .noActiveModel: return "请先下载并选择本地模型"
         case .inferenceFailed(let msg): return "本地推理失败：\(msg)"
         case .network(let msg): return "网络错误：\(msg)"
-        case .http(let status, let body):
+        case .http(let status, let body, let url, let model):
             // 先尝试从服务器返回的 JSON 中识别具体错误码（百炼/OpenAI 通常用 code 字段）
             let lower = body.lowercased()
             let serverCode: String
@@ -172,7 +177,7 @@ enum ChatError: LocalizedError {
                 }
             }
             let detail = body.isEmpty ? "" : " · \(body.prefix(300))"
-            return "请求失败（HTTP \(status)）：\(hint)\(detail)"
+            return "请求失败（HTTP \(status)）：\(hint)\(detail)\n请求地址：\(url)\n模型名：\(model)"
         }
     }
 }
