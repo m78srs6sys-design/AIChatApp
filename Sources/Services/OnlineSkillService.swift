@@ -133,10 +133,10 @@ final class OnlineSkillService {
         }
 
         var text = raw
-        text = text.replacingOccurrences(of: "<script.*?</script>", with: " ",
-                                         options: [.regularExpression, .caseInsensitive, .dotMatchesLineSeparators])
-        text = text.replacingOccurrences(of: "<style.*?</style>", with: " ",
-                                         options: [.regularExpression, .caseInsensitive, .dotMatchesLineSeparators])
+        text = text.replacingOccurrences(of: "(?s)<script.*?</script>", with: " ",
+                                         options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: "(?s)<style.*?</style>", with: " ",
+                                         options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: "<[^>]+>", with: " ", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: "&[a-z]+;", with: " ", options: .regularExpression)
         text = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
