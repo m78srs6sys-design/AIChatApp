@@ -70,7 +70,7 @@ struct ChatView: View {
                     .frame(width: 38, height: 38)
                     .background(Circle().fill(AppTheme.surface))
             }
-            .buttonStyle(BounceButtonStyle)
+            .buttonStyle(BounceButtonStyle())
 
             // 清空
             Button {
@@ -82,7 +82,7 @@ struct ChatView: View {
                     .frame(width: 38, height: 38)
                     .background(Circle().fill(AppTheme.surface))
             }
-            .buttonStyle(BounceButtonStyle)
+            .buttonStyle(BounceButtonStyle())
 
             // 设置
             NavigationLink(value: AppRoute.settings) {
@@ -92,7 +92,7 @@ struct ChatView: View {
                     .frame(width: 38, height: 38)
                     .background(Circle().fill(AppTheme.surface))
             }
-            .buttonStyle(BounceButtonStyle)
+            .buttonStyle(BounceButtonStyle())
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
