@@ -66,7 +66,7 @@ struct SettingsView: View {
                             .background(AppTheme.accent)
                             .clipShape(RoundedRectangle(cornerRadius: AppTheme.cornerRadius, style: .continuous))
                     }
-                    .buttonStyle(BounceButtonStyle)
+                    .buttonStyle(BounceButtonStyle())
 
                     Text("提示：联网功能（搜索、图片生成、语音合成）通过云端函数调用，需配置后端服务。")
                         .font(.system(size: 12))
