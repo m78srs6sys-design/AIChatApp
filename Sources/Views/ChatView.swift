@@ -120,7 +120,7 @@ struct ChatView: View {
                 }
                 .padding(.vertical, 12)
             }
-            .scrollDismissesKeyboard(.interactively)
+            .scrollDismissesKeyboard(.immediately)
             .onChange(of: chatVM.messages.count) { _ in
                 scrollToBottom(proxy)
             }
