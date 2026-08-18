@@ -29,7 +29,7 @@ struct ModeSwitcher: View {
                             }
                         )
                 }
-                .buttonStyle(BounceButtonStyle)
+                .buttonStyle(BounceButtonStyle())
             }
         }
         .padding(4)
