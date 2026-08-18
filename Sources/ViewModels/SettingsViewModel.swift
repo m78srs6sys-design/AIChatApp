@@ -5,10 +5,12 @@ final class SettingsViewModel: ObservableObject {
     @Published var settings: APISettings
 
     init() {
-        settings = PersistenceManager.shared.loadSettings()
+        // 优先从 iCloud 读取（重装后自动恢复），回退本机
+        settings = ICloudSettingsStore.load() ?? APISettings()
     }
 
     func save() {
-        PersistenceManager.shared.saveSettings(settings)
+        // 同时写入 iCloud 与本机
+        ICloudSettingsStore.save(settings)
     }
 }
