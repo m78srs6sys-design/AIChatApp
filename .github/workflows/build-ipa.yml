@@ -1,8 +1,5 @@
 name: Build unsigned IPA
 
-# 没有 Mac 也能用：在 GitHub 的 macOS 云主机上编译出未签名 IPA。
-# 仅手动触发（workflow_dispatch），避免上传文件时每个 commit 都自动跑。
-
 on:
   workflow_dispatch:
 
@@ -17,7 +14,27 @@ jobs:
         run: brew install xcodegen
 
       - name: Generate Xcode project
-        run: xcodegen generate
+        id: gen
+        run: |
+          {
+            echo "PWD=$(pwd)"
+            echo "--- ls before ---"
+            ls -la
+            echo "--- which xcodegen ---"
+            command -v xcodegen || echo "NOT_FOUND"
+            echo "--- xcodegen version ---"
+            xcodegen --version 2>&1 || echo "VERSION_FAIL"
+            echo "--- generate ---"
+            xcodegen generate 2>&1
+            echo "--- ls after ---"
+            ls -la
+            test -d AIChatApp.xcodeproj && echo "PROJECT_EXISTS=yes" || echo "PROJECT_EXISTS=no"
+          } > gen.log 2>&1
+          cat gen.log
+          if ! grep -q "PROJECT_EXISTS=yes" gen.log; then
+            while IFS= read -r line; do echo "::error::GEN|${line}"; done < gen.log
+            exit 1
+          fi
 
       - name: Build unsigned archive
         id: build
@@ -39,7 +56,7 @@ jobs:
       - name: Emit build errors (annotations)
         if: failure()
         run: |
-          grep -E "error:|fatal error:" build.log | head -40 | while IFS= read -r line; do
+          grep -E "error:|fatal error:|BUILD FAILED|The following build commands failed" build.log | head -60 | while IFS= read -r line; do
             echo "::error::${line}"
           done
 
