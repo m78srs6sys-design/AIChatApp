@@ -30,7 +30,7 @@ enum PDFExporter {
             var y: CGFloat = margin
             let maxWidth = pageRect.width - margin * 2
 
-            "AI 对话记录".draw(in: CGRect(x: margin, y: y, maxWidth, 30), withAttributes: titleAttrs)
+            "AI 对话记录".draw(in: CGRect(x: margin, y: y, width: maxWidth, height: 30), withAttributes: titleAttrs)
             y += 40
 
             let dateFormatter = DateFormatter()
@@ -40,17 +40,17 @@ enum PDFExporter {
                 let role = msg.role == .user ? "我" : "AI"
                 let timeStr = dateFormatter.string(from: msg.timestamp)
                 let header = "[\(timeStr)] \(role)"
-                let headerRect = CGRect(x: margin, y: y, maxWidth, 20)
+                let headerRect = CGRect(x: margin, y: y, width: maxWidth, height: 20)
                 header.draw(in: headerRect, withAttributes: roleUserAttrs)
                 y += 24
 
-                let bodyRect = CGRect(x: margin, y: y, maxWidth, 0)
+                let bodyRect = CGRect(x: margin, y: y, width: maxWidth, height: 0)
                 let bodySize = (msg.content as NSString).boundingRect(
                     with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
                     options: [.usesLineFragmentOrigin, .usesFontLeading],
                     attributes: bodyAttrs, context: nil
                 )
-                (msg.content as NSString).draw(in: CGRect(x: margin, y: y, maxWidth, bodySize.height), withAttributes: bodyAttrs)
+                (msg.content as NSString).draw(in: CGRect(x: margin, y: y, width: maxWidth, height: bodySize.height), withAttributes: bodyAttrs)
                 y += bodySize.height + 20
 
                 if y > pageRect.height - margin {
