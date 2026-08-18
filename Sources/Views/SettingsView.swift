@@ -32,27 +32,6 @@ struct SettingsView: View {
                             settingField(title: "接口地址", placeholder: "https://api.example.com", text: $settingsVM.settings.apiURL)
                             settingField(title: "API 密钥", placeholder: "sk-...", text: $settingsVM.settings.apiKey, secure: true)
                             settingField(title: "模型名称", placeholder: "gpt-4o-mini", text: $settingsVM.settings.modelName)
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("对话引擎")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(AppTheme.secondaryText)
-                                Picker("", selection: $settingsVM.settings.engine) {
-                                    ForEach(APIEngine.allCases, id: \.self) { e in
-                                        Text(e.rawValue).tag(e)
-                                    }
-                                }
-                                .pickerStyle(.segmented)
-                            }
-                        }
-                    }
-
-                    // 功能开关
-                    section(title: "联网功能") {
-                        VStack(spacing: 0) {
-                            toggleRow(title: "深度思考", subtitle: "开启后进行慢速精准推理", isOn: $settingsVM.settings.deepThinking)
-                            Divider().background(AppTheme.divider)
-                            toggleRow(title: "回答自动朗读", subtitle: "MiniMax 语音合成", isOn: $settingsVM.settings.ttsEnabled)
                         }
                     }
 
@@ -138,17 +117,5 @@ struct SettingsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
         }
-    }
-
-    private func toggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 15, weight: .medium)).foregroundColor(AppTheme.primaryText)
-                Text(subtitle).font(.system(size: 12)).foregroundColor(AppTheme.secondaryText)
-            }
-            Spacer()
-            Toggle("", isOn: isOn).labelsHidden().tint(AppTheme.accent)
-        }
-        .padding(.vertical, 4)
     }
 }
