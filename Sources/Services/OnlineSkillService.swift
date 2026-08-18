@@ -1,70 +1,150 @@
 import Foundation
 import CoreLocation
 
-/// 联网技能服务集合：搜索、图片生成、语音合成、定位
-/// 这些能力仅在联网模式下使用，通过 Edge Function / 第三方接口调用
+/// 联网技能服务集合：搜索、图片生成、天气、网页抓取、语音合成。
+/// 全部使用「免密钥」公开接口实现，无需配置任何后端服务：
+///   - 搜索：维基百科 API
+///   - 图片生成：Pollinations.ai
+///   - 天气：open-meteo
+///   - 网页抓取：直连目标 URL 并裁剪正文
 final class OnlineSkillService {
     static let shared = OnlineSkillService()
-    private let session = URLSession.shared
-    private init() {}
+    private let session: URLSession
 
-    // MARK: - 百度 AI 搜索
+    private init() {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 60
+        session = URLSession(configuration: cfg)
+    }
+
+    // MARK: - 联网搜索（维基百科，免密钥）
     func search(query: String) async throws -> [SearchResultItem] {
-        // 通过 Supabase Edge Function 代理调用百度搜索，保护密钥
-        let urlStr = (ProcessInfo.processInfo.environment["SUPABASE_URL"] ?? "")
-        guard !urlStr.isEmpty else { return [] }
-        guard let url = URL(string: "\(urlStr)/functions/v1/baidu-search") else { return [] }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
-
-        let (data, resp) = try await session.data(for: req)
-        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return [] }
-        if let items = try? JSONDecoder().decode([SearchResultItem].self, from: data) {
-            return items
+        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlStr = "https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=\(q)&format=json&srlimit=5&prop=snippet"
+        guard let url = URL(string: urlStr) else { return [] }
+        let (data, resp) = try await session.data(from: url)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let queryObj = json["query"] as? [String: Any],
+              let searchArr = queryObj["search"] as? [[String: Any]] else { return [] }
+        return searchArr.compactMap { d -> SearchResultItem? in
+            guard let title = d["title"] as? String else { return nil }
+            let raw = d["snippet"] as? String ?? ""
+            let snippet = raw
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&nbsp;", with: " ")
+            let enc = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title
+            return SearchResultItem(title: title,
+                                    url: "https://zh.wikipedia.org/wiki/\(enc)",
+                                    snippet: snippet.isEmpty ? nil : snippet)
         }
-        return []
     }
 
-    // MARK: - AI 图片生成（可灵 / GPT-Image）
+    // MARK: - AI 图片生成（Pollinations，免密钥，直出图片 URL）
     func generateImage(prompt: String) async throws -> String {
-        let urlStr = (ProcessInfo.processInfo.environment["SUPABASE_URL"] ?? "")
-        guard !urlStr.isEmpty else { throw ChatError.requestFailed }
-        guard let url = URL(string: "\(urlStr)/functions/v1/image-generate") else { throw ChatError.requestFailed }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["prompt": prompt])
-
-        let (data, resp) = try await session.data(for: req)
-        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { throw ChatError.requestFailed }
-        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let imageUrl = obj["url"] as? String {
-            return imageUrl
-        }
-        throw ChatError.requestFailed
+        let p = prompt.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? prompt
+        let seed = Int.random(in: 1...1_000_000)
+        let url = "https://image.pollinations.ai/prompt/\(p)?width=1024&height=1024&nologo=true&model=flux&seed=\(seed)"
+        guard URL(string: url) != nil else { throw ChatError.requestFailed }
+        return url
     }
 
-    // MARK: - MiniMax 语音合成
-    func synthesizeSpeech(text: String) async throws -> String {
-        let urlStr = (ProcessInfo.processInfo.environment["SUPABASE_URL"] ?? "")
-        guard !urlStr.isEmpty else { throw ChatError.requestFailed }
-        guard let url = URL(string: "\(urlStr)/functions/v1/minimax-tts") else { throw ChatError.requestFailed }
+    // MARK: - 天气（open-meteo，免密钥）
+    func weather(from text: String) async throws -> WeatherInfo {
+        let cleaned = text
+            .replacingOccurrences(of: "天气", with: "")
+            .replacingOccurrences(of: "气温", with: "")
+            .replacingOccurrences(of: "温度", with: "")
+            .replacingOccurrences(of: "多少", with: "")
+            .replacingOccurrences(of: "今天", with: "")
+            .replacingOccurrences(of: "现在", with: "")
+            .replacingOccurrences(of: "明天", with: "")
+            .replacingOccurrences(of: "后天", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let city = cleaned.isEmpty ? "北京" : cleaned
+        let enc = city.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? city
 
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["text": text])
-
-        let (data, resp) = try await session.data(for: req)
-        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { throw ChatError.requestFailed }
-        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let audioURL = obj["audio_url"] as? String {
-            return audioURL
+        let geoURL = "https://geocoding-api.open-meteo.com/v1/search?name=\(enc)&count=1&language=zh&format=json"
+        guard let gurl = URL(string: geoURL),
+              let (gdata, _) = try? await session.data(from: gurl),
+              let gjson = try? JSONSerialization.jsonObject(with: gdata) as? [String: Any],
+              let results = gjson["results"] as? [[String: Any]],
+              let first = results.first,
+              let lat = first["latitude"] as? Double,
+              let lon = first["longitude"] as? Double else {
+            throw ChatError.requestFailed
         }
+        let cityName = (first["name"] as? String) ?? city
+
+        let fcURL = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto"
+        guard let furl = URL(string: fcURL),
+              let (fdata, _) = try? await session.data(from: furl),
+              let fjson = try? JSONSerialization.jsonObject(with: fdata) as? [String: Any],
+              let current = fjson["current"] as? [String: Any] else {
+            throw ChatError.requestFailed
+        }
+        let temp = current["temperature_2m"] as? Double ?? 0
+        let humidity = current["relative_humidity_2m"] as? Int
+        let wind = current["wind_speed_10m"] as? Double
+        let code = current["weather_code"] as? Int ?? 0
+        return WeatherInfo(city: cityName,
+                           temperature: temp,
+                           condition: Self.weatherDescription(code),
+                           humidity: humidity,
+                           windSpeed: wind,
+                           units: "°C")
+    }
+
+    private static func weatherDescription(_ code: Int) -> String {
+        let map: [Int: String] = [
+            0: "晴", 1: "大致晴朗", 2: "局部多云", 3: "阴",
+            45: "雾", 48: "霜雾",
+            51: "小毛毛雨", 53: "毛毛雨", 55: "大毛毛雨",
+            56: "冻毛毛雨", 57: "强冻毛毛雨",
+            61: "小雨", 63: "中雨", 65: "大雨",
+            66: "冻雨", 67: "强冻雨",
+            71: "小雪", 73: "中雪", 75: "大雪", 77: "雪粒",
+            80: "阵雨", 81: "强阵雨", 82: "暴雨",
+            85: "阵雪", 86: "强阵雪",
+            95: "雷阵雨", 96: "雷阵雨伴冰雹", 99: "强雷暴冰雹"
+        ]
+        return map[code] ?? "未知"
+    }
+
+    // MARK: - 网页抓取与摘要（直连，免密钥）
+    func fetchWebpage(url: String) async throws -> WebpageSummary {
+        guard let u = URL(string: url),
+              let (data, _) = try? await session.data(from: u),
+              let raw = String(data: data, encoding: .utf8) else {
+            throw ChatError.requestFailed
+        }
+
+        var title = "网页"
+        if let tr = raw.range(of: "<title>(.*?)</title>", options: [.regularExpression, .caseInsensitive]) {
+            title = String(raw[tr])
+                .replacingOccurrences(of: "(?i)<title>", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "(?i)</title>", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var text = raw
+        text = text.replacingOccurrences(of: "<script.*?</script>", with: " ",
+                                         options: [.regularExpression, .caseInsensitive, .dotMatchesLineSeparators])
+        text = text.replacingOccurrences(of: "<style.*?</style>", with: " ",
+                                         options: [.regularExpression, .caseInsensitive, .dotMatchesLineSeparators])
+        text = text.replacingOccurrences(of: "<[^>]+>", with: " ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: "&[a-z]+;", with: " ", options: .regularExpression)
+        text = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        return WebpageSummary(url: url, title: title, summary: String(text.prefix(4000)))
+    }
+
+    // MARK: - 语音合成（未接入后端时降级，不影响文本）
+    func synthesizeSpeech(text: String) async throws -> String {
         throw ChatError.requestFailed
     }
 }
