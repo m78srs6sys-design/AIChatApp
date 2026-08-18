@@ -14,27 +14,17 @@ jobs:
         run: brew install xcodegen
 
       - name: Generate Xcode project
-        id: gen
         run: |
-          {
-            echo "PWD=$(pwd)"
-            echo "--- ls before ---"
-            ls -la
-            echo "--- which xcodegen ---"
-            command -v xcodegen || echo "NOT_FOUND"
-            echo "--- xcodegen version ---"
-            xcodegen --version 2>&1 || echo "VERSION_FAIL"
-            echo "--- generate ---"
-            xcodegen generate 2>&1
-            echo "--- ls after ---"
-            ls -la
-            test -d AIChatApp.xcodeproj && echo "PROJECT_EXISTS=yes" || echo "PROJECT_EXISTS=no"
-          } > gen.log 2>&1
+          xcodegen generate > gen.log 2>&1
+          echo "EXIT=$?" >> gen.log
+          echo "--- ls root ---" >> gen.log
+          ls -la >> gen.log
+          echo "--- ls AIChatApp.xcodeproj ---" >> gen.log
+          ls -la AIChatApp.xcodeproj >> gen.log 2>&1
+          echo "--- pbxproj size ---" >> gen.log
+          wc -c AIChatApp.xcodeproj/project.pbxproj >> gen.log 2>&1
           cat gen.log
-          if ! grep -q "PROJECT_EXISTS=yes" gen.log; then
-            while IFS= read -r line; do echo "::error::GEN|${line}"; done < gen.log
-            exit 1
-          fi
+          while IFS= read -r line; do echo "::error::GEN|${line}"; done < gen.log
 
       - name: Build unsigned archive
         id: build
