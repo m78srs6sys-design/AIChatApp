@@ -9,6 +9,7 @@ final class ChatViewModel: ObservableObject {
     @Published var inputText: String = ""
     @Published var isGenerating: Bool = false
     @Published var errorMessage: String?
+    @Published var statusMessage: String?
     @Published var currentAudioURL: String?
     @Published var isPlayingAudio: Bool = false
 
@@ -49,6 +50,8 @@ final class ChatViewModel: ObservableObject {
         guard !isGenerating else { return }
 
         errorMessage = nil
+        statusMessage = mode == .online ? "正在连接…" : "正在准备本地推理…"
+        isGenerating = true
         let userMsg = ChatMessage(role: .user, content: text)
         messages.append(userMsg)
         inputText = ""
@@ -64,6 +67,10 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: - Online Flow
     private func runOnline(userText: String, settings: APISettings) async {
+        defer {
+            isGenerating = false
+            statusMessage = nil
+        }
         guard settings.isConfigured else {
             errorMessage = ChatError.notConfigured.errorDescription
             return
@@ -105,6 +112,7 @@ final class ChatViewModel: ObservableObject {
         let aiMsg = ChatMessage(role: .assistant, content: "", isStreaming: true, attachments: attachments)
         messages.append(aiMsg)
         persist()
+        statusMessage = "正在生成回复…"
 
         do {
             try await onlineEngine.streamChat(messages: messages.filter { !$0.isStreaming },
@@ -138,6 +146,10 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: - Offline Flow
     private func runOffline(activeModel: LocalModel?) async {
+        defer {
+            isGenerating = false
+            statusMessage = nil
+        }
         guard let model = activeModel else {
             errorMessage = ChatError.noActiveModel.errorDescription
             return
@@ -151,7 +163,8 @@ final class ChatViewModel: ObservableObject {
         }
 
         do {
-            try localEngine.loadModel(at: path.path, contextLength: model.contextLength)
+            statusMessage = "正在加载本地模型，请稍候…"
+            try await localEngine.loadModel(at: path.path, contextLength: model.contextLength)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -160,6 +173,7 @@ final class ChatViewModel: ObservableObject {
         let aiMsg = ChatMessage(role: .assistant, content: "", isStreaming: true)
         messages.append(aiMsg)
         persist()
+        statusMessage = "正在生成回复…"
 
         do {
             try await localEngine.streamInfer(messages: messages.filter { $0.id != aiMsg.id }) { [weak self] token in
