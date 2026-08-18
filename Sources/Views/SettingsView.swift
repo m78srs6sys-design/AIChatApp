@@ -32,6 +32,18 @@ struct SettingsView: View {
                             settingField(title: "接口地址", placeholder: "https://api.example.com", text: $settingsVM.settings.apiURL)
                             settingField(title: "API 密钥", placeholder: "sk-...", text: $settingsVM.settings.apiKey, secure: true)
                             settingField(title: "模型名称", placeholder: "gpt-4o-mini", text: $settingsVM.settings.modelName)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("深度思考字段类型")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(AppTheme.secondaryText)
+                                Picker("", selection: $settingsVM.settings.deepThinkingField) {
+                                    ForEach(DeepThinkingField.allCases, id: \.self) { f in
+                                        Text(f.displayName).tag(f)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                            }
                         }
                     }
 
