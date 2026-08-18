@@ -10,10 +10,13 @@ final class OnlineChatEngine {
     }
 
     /// 发起流式对话请求，逐 token 回调
+    /// - onToken: 正文内容增量
+    /// - onReasoning: 深度思考过程（reasoning_content）增量，可能为空
     func streamChat(
         messages: [ChatMessage],
         settings: APISettings,
-        onToken: @escaping (String) -> Void
+        onToken: @escaping (String) -> Void,
+        onReasoning: ((String) -> Void)? = nil
     ) async throws {
         let apiURL = settings.apiURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let apiKey = settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -68,10 +71,15 @@ final class OnlineChatEngine {
             guard let data = payload.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = json["choices"] as? [[String: Any]],
-                  let delta = choices.first?["delta"] as? [String: Any],
-                  let content = delta["content"] as? String else {
+                  let delta = choices.first?["delta"] as? [String: Any] else {
                 continue
             }
+            // 深度思考过程（兼容 DeepSeek 的 reasoning_content 与部分服务商的 reasoning）
+            if let reasoning = (delta["reasoning_content"] as? String) ?? (delta["reasoning"] as? String),
+               !reasoning.isEmpty {
+                onReasoning?(reasoning)
+            }
+            guard let content = delta["content"] as? String else { continue }
             if !content.isEmpty {
                 onToken(content)
             }
