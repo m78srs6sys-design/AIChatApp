@@ -80,12 +80,18 @@ final class OnlineChatEngine {
             "model": settings.modelName,
             "messages": history,
             "stream": true,
-            "temperature": 0.7
+            "temperature": 0.7,
+            "max_tokens": 1024
         ]
 
-        // 深度思考：携带推理参数
+        // 深度思考：开关打开时按用户选择的字段类型插入，关闭时不发送任何字段（避免多余字段导致 400）
         if settings.deepThinking {
-            body["reasoning_effort"] = "high"
+            switch settings.deepThinkingField {
+            case .thinkingEnabled:
+                body["thinking_enabled"] = true
+            case .reasoningEffort:
+                body["reasoning_effort"] = "high"
+            }
         }
 
         return body
