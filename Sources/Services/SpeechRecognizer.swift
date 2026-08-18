@@ -4,7 +4,8 @@ import AVFoundation
 
 /// 端侧语音识别（Apple Speech 公开框架，无需任何密钥/后端）。
 /// 长按录音，松开后返回识别文本。
-@MainActor
+/// 注意：不标记为 @MainActor，避免 SwiftUI 视图跨隔离域访问其 @Published 属性报错；
+/// 调用方（长按手势）本就在主线程，回调中通过 DispatchQueue.main 更新 UI 属性。
 final class SpeechRecognizer: ObservableObject {
     static let shared = SpeechRecognizer()
 
@@ -18,7 +19,7 @@ final class SpeechRecognizer: ObservableObject {
     @Published var isRecording = false
     @Published var transcript: String = ""
 
-    override init() {
+    init() {
         recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
                    ?? SFSpeechRecognizer()
         Task { await requestAuth() }
