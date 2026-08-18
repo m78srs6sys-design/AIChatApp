@@ -67,9 +67,14 @@ struct MessageBubble: View {
         } else {
             HStack(alignment: .bottom, spacing: 2) {
                 if message.content.isEmpty && message.isStreaming {
-                    HStack(spacing: 4) {
-                        ForEach(0..<3, id: \.self) { i in
-                            DotPulse(delay: Double(i) * 0.2)
+                    HStack(spacing: 8) {
+                        ShimmerView()
+                            .frame(width: 26, height: 26)
+                            .clipShape(Circle())
+                        HStack(spacing: 4) {
+                            ForEach(0..<3, id: \.self) { i in
+                                DotPulse(delay: Double(i) * 0.2)
+                            }
                         }
                     }
                     .padding(.horizontal, 18)
@@ -177,6 +182,60 @@ struct AttachmentView: View {
                                 .foregroundColor(AppTheme.secondaryText)
                                 .lineLimit(2)
                         }
+                    }
+                }
+            }
+            .padding(14)
+            .background(AppTheme.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
+
+        case .weather(let w):
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "cloud.sun.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(AppTheme.accent)
+                    Text(w.city)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(AppTheme.primaryText)
+                    Spacer()
+                    Text(String(format: "%.0f%@", w.temperature, w.units))
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(AppTheme.primaryText)
+                }
+                Text(w.condition)
+                    .font(.system(size: 13))
+                    .foregroundColor(AppTheme.secondaryText)
+                if let h = w.humidity, let wind = w.windSpeed {
+                    Text("湿度 \(h)% · 风速 \(String(format: "%.0f", wind)) km/h")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppTheme.tertiaryText)
+                }
+            }
+            .padding(14)
+            .background(AppTheme.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
+
+        case .webpage(let p):
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.richtext.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(AppTheme.accent)
+                    Text(p.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(AppTheme.primaryText)
+                        .lineLimit(1)
+                }
+                Text(p.summary)
+                    .font(.system(size: 12))
+                    .foregroundColor(AppTheme.secondaryText)
+                    .lineLimit(4)
+                if let u = URL(string: p.url) {
+                    Link(destination: u) {
+                        Text("查看原文")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(AppTheme.accentSoft)
                     }
                 }
             }
