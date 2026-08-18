@@ -25,6 +25,9 @@ struct ChatView: View {
                 if let err = chatVM.errorMessage {
                     errorBanner(err)
                 }
+                if let status = chatVM.statusMessage, chatVM.isGenerating {
+                    statusBanner(status)
+                }
                 if chatVM.mode == .online {
                     deepThinkingBar
                 }
@@ -157,6 +160,22 @@ struct ChatView: View {
                 .padding(.horizontal, 40)
         }
         .padding(.top, 80)
+    }
+
+    // MARK: - Status Banner
+    private func statusBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .tint(AppTheme.accent)
+                .scaleEffect(0.8)
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundColor(AppTheme.secondaryText)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(AppTheme.surface.opacity(0.6))
     }
 
     // MARK: - Deep Thinking Bar
