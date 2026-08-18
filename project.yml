@@ -19,12 +19,6 @@ settings:
     CODE_SIGNING_REQUIRED: "NO"
     CODE_SIGN_IDENTITY: ""
 
-packages:
-  # 本地离线推理依赖：llama.cpp 的 Swift 绑定
-  llama.cpp:
-    url: https://github.com/ggerganov/llama.cpp.git
-    branch: master
-
 targets:
   AIChatApp:
     type: application
@@ -35,9 +29,8 @@ targets:
       - path: Sources
       - path: SupportingFiles/Assets.xcassets
 
-    dependencies:
-      - package: llama.cpp
-        product: llama
+    # 注：本地离线推理（llama.cpp）依赖已移除，当前为「仅联网对话」版本。
+    # 无任何第三方 SPM 依赖，编译更稳定。
 
     info:
       # 直接引用完整、规范的 Info.plist（已补全 CFBundleExecutable 等必需键）
