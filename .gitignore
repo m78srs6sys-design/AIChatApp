@@ -1,0 +1,18 @@
+# Xcode / 构建产物
+build/
+.build/
+DerivedData/
+*.xcarchive
+*.ipa
+*.dSYM
+*.app
+
+# XcodeGen 生成的工程（每次重新生成即可）
+AIChatApp.xcodeproj/
+
+# macOS
+.DS_Store
+
+# SwiftPM
+.build/
+Package.resolved
