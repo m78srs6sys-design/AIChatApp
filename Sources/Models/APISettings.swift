@@ -59,6 +59,7 @@ enum APIPreset: String, CaseIterable, Identifiable {
     case openAI
     case deepSeek
     case qwen
+    case qwen3
     case glm
     case kimi
 
@@ -68,7 +69,8 @@ enum APIPreset: String, CaseIterable, Identifiable {
         switch self {
         case .openAI: return "OpenAI"
         case .deepSeek: return "DeepSeek"
-        case .qwen: return "通义千问"
+        case .qwen: return "通义千问 Qwen-Plus"
+        case .qwen3: return "通义千问 Qwen3-8B"
         case .glm: return "智谱 GLM"
         case .kimi: return "Kimi (Moonshot)"
         }
@@ -79,6 +81,7 @@ enum APIPreset: String, CaseIterable, Identifiable {
         case .openAI: return "https://api.openai.com/v1"
         case .deepSeek: return "https://api.deepseek.com/v1"
         case .qwen: return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        case .qwen3: return "https://dashscope.aliyuncs.com/compatible-mode/v1"
         case .glm: return "https://open.bigmodel.cn/api/paas/v4"
         case .kimi: return "https://api.moonshot.cn/v1"
         }
@@ -89,6 +92,7 @@ enum APIPreset: String, CaseIterable, Identifiable {
         case .openAI: return "gpt-4o-mini"
         case .deepSeek: return "deepseek-chat"
         case .qwen: return "qwen-plus"
+        case .qwen3: return "qwen3-8b"
         case .glm: return "glm-4-flash"
         case .kimi: return "moonshot-v1-8k"
         }
