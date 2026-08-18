@@ -187,8 +187,8 @@ final class ChatViewModel: ObservableObject {
     private func appendAssistant(with attachments: [MessageAttachment] = []) -> UUID {
         let id = UUID()
         store.mutateCurrent {
-            $0.messages.append(ChatMessage(role: .assistant, content: "", isStreaming: true,
-                                           attachments: attachments, id: id))
+            $0.messages.append(ChatMessage(id: id, role: .assistant, content: "", isStreaming: true,
+                                           attachments: attachments))
         }
         return id
     }
