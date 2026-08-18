@@ -1,12 +1,10 @@
 name: Build unsigned IPA
 
-# 没有 Mac 也能用：把本项目推到 GitHub，然后用此工作流在 GitHub 的
-# macOS 云主机上编译出未签名 IPA，再到 Actions 页面下载 artifact。
+# 没有 Mac 也能用：在 GitHub 的 macOS 云主机上编译出未签名 IPA。
+# 仅手动触发（workflow_dispatch），避免上传文件时每个 commit 都自动跑。
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 jobs:
   build:
@@ -22,7 +20,9 @@ jobs:
         run: xcodegen generate
 
       - name: Build unsigned archive
+        id: build
         run: |
+          set -o pipefail
           xcodebuild \
             -project AIChatApp.xcodeproj \
             -scheme AIChatApp \
@@ -34,15 +34,24 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            archive
+            archive 2>&1 | tee build.log
+
+      - name: Emit build errors (annotations)
+        if: failure()
+        run: |
+          grep -E "error:|fatal error:" build.log | head -40 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
 
       - name: Package unsigned IPA
+        if: success()
         run: |
           mkdir -p build/Payload
           cp -R build/AIChatApp.xcarchive/Products/Applications/AIChatApp.app build/Payload/
           (cd build && zip -qry AIChatApp-unsigned.ipa Payload)
 
       - name: Upload IPA artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: AIChatApp-unsigned
