@@ -104,7 +104,8 @@ struct ModelManagementView: View {
                     Button(isActive ? "已选择" : "使用此模型") {
                         modelManager.setActive(model)
                     }
-                    .buttonStyle(isActive ? AnyButtonStyle(SecondaryActionButtonStyle()) : AnyButtonStyle(PrimaryActionButtonStyle()))
+                    .buttonStyle(PrimaryActionButtonStyle())
+                    .opacity(isActive ? 0.5 : 1.0)
                     .disabled(isActive)
                     Spacer()
                     Button {
