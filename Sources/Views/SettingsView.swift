@@ -11,6 +11,24 @@ struct SettingsView: View {
                     // 联网 API 设置
                     section(title: "联网 API 设置") {
                         VStack(spacing: 14) {
+                            Menu {
+                                ForEach(APIPreset.allCases) { preset in
+                                    Button(preset.name) {
+                                        settingsVM.settings.apiURL = preset.url
+                                        settingsVM.settings.modelName = preset.model
+                                        settingsVM.settings.engine = .openAICompatible
+                                    }
+                                }
+                            } label: {
+                                Label("快速填入预设接口", systemImage: "wand.and.stars")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(AppTheme.accent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(AppTheme.accent.opacity(0.12))
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+
                             settingField(title: "接口地址", placeholder: "https://api.example.com", text: $settingsVM.settings.apiURL)
                             settingField(title: "API 密钥", placeholder: "sk-...", text: $settingsVM.settings.apiKey, secure: true)
                             settingField(title: "模型名称", placeholder: "gpt-4o-mini", text: $settingsVM.settings.modelName)
