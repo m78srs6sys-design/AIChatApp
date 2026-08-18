@@ -25,6 +25,9 @@ struct ChatView: View {
                 if let err = chatVM.errorMessage {
                     errorBanner(err)
                 }
+                if chatVM.mode == .online {
+                    deepThinkingBar
+                }
                 InputBar(text: $chatVM.inputText, isGenerating: chatVM.isGenerating) {
                     chatVM.send(settings: settingsVM.settings, activeModel: activeModel)
                 }
@@ -154,6 +157,35 @@ struct ChatView: View {
                 .padding(.horizontal, 40)
         }
         .padding(.top, 80)
+    }
+
+    // MARK: - Deep Thinking Bar
+    private var deepThinkingBar: some View {
+        HStack {
+            Button {
+                settingsVM.settings.deepThinking.toggle()
+                settingsVM.save()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: settingsVM.settings.deepThinking ? "brain.fill" : "brain")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("深度思考")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(settingsVM.settings.deepThinking ? AppTheme.accent : AppTheme.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(settingsVM.settings.deepThinking ? AppTheme.accent.opacity(0.16) : AppTheme.surface)
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
+            }
+            .buttonStyle(BounceButtonStyle())
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
     }
 
     // MARK: - Error Banner
