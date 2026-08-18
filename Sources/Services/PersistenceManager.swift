@@ -10,6 +10,8 @@ final class PersistenceManager {
         static let settings = "aichat.settings"
         static let mode = "aichat.mode"
         static let activeModelId = "aichat.activeModelId"
+        static let conversations = "aichat.conversations"
+        static let currentId = "aichat.currentId"
     }
 
     private init() {}
@@ -66,5 +68,31 @@ final class PersistenceManager {
     func saveActiveModelId(_ id: String?) {
         if let id { defaults.set(id, forKey: Keys.activeModelId) }
         else { defaults.removeObject(forKey: Keys.activeModelId) }
+    }
+
+    // MARK: - Conversations（多对话独立上下文）
+    func loadConversations() -> [Conversation] {
+        guard let data = defaults.data(forKey: Keys.conversations),
+              let arr = try? JSONDecoder().decode([Conversation].self, from: data) else {
+            return []
+        }
+        return arr
+    }
+
+    func saveConversations(_ conversations: [Conversation]) {
+        if let data = try? JSONEncoder().encode(conversations) {
+            defaults.set(data, forKey: Keys.conversations)
+        }
+    }
+
+    func loadCurrentId() -> UUID? {
+        guard let s = defaults.string(forKey: Keys.currentId),
+              let id = UUID(uuidString: s) else { return nil }
+        return id
+    }
+
+    func saveCurrentId(_ id: UUID?) {
+        if let id { defaults.set(id.uuidString, forKey: Keys.currentId) }
+        else { defaults.removeObject(forKey: Keys.currentId) }
     }
 }
