@@ -17,33 +17,44 @@ final class LocalInferenceEngine {
     /// 是否已加载模型
     var isModelLoaded: Bool { model != nil && context != nil }
 
-    /// 加载模型文件
-    func loadModel(at path: String, contextLength: Int) throws {
-        try queue.sync {
-            // 已加载相同模型则跳过
-            if currentModelPath == path, model != nil { return }
-            unload()
-
-            var modelParams = llama_model_default_params()
-            modelParams.n_gpu_layers = 0  // 纯 CPU 推理，保证兼容性
-
-            guard let loadedModel = llama_model_load_from_file(path, modelParams) else {
-                throw ChatError.inferenceFailed("模型文件加载失败")
+    /// 加载模型文件（异步，在后台线程执行，不阻塞主线程/UI）
+    func loadModel(at path: String, contextLength: Int) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                do {
+                    try self.loadModelSync(at: path, contextLength: contextLength)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             }
-            self.model = loadedModel
-
-            var ctxParams = llama_context_default_params()
-            ctxParams.n_ctx = UInt32(contextLength)
-            ctxParams.n_threads = Int32(max(1, ProcessInfo.processInfo.activeProcessorCount - 1))
-            ctxParams.n_threads_batch = ctxParams.n_threads
-
-            guard let ctx = llama_init_from_model(loadedModel, ctxParams) else {
-                throw ChatError.inferenceFailed("推理上下文初始化失败")
-            }
-            self.context = ctx
-            self.vocab = llama_model_get_vocab(loadedModel)
-            self.currentModelPath = path
         }
+    }
+
+    private func loadModelSync(at path: String, contextLength: Int) throws {
+        // 已加载相同模型则跳过
+        if currentModelPath == path, model != nil { return }
+        unload()
+
+        var modelParams = llama_model_default_params()
+        modelParams.n_gpu_layers = 0  // 纯 CPU 推理，保证兼容性
+
+        guard let loadedModel = llama_model_load_from_file(path, modelParams) else {
+            throw ChatError.inferenceFailed("模型文件加载失败")
+        }
+        self.model = loadedModel
+
+        var ctxParams = llama_context_default_params()
+        ctxParams.n_ctx = UInt32(contextLength)
+        ctxParams.n_threads = Int32(max(1, ProcessInfo.processInfo.activeProcessorCount - 1))
+        ctxParams.n_threads_batch = ctxParams.n_threads
+
+        guard let ctx = llama_init_from_model(loadedModel, ctxParams) else {
+            throw ChatError.inferenceFailed("推理上下文初始化失败")
+        }
+        self.context = ctx
+        self.vocab = llama_model_get_vocab(loadedModel)
+        self.currentModelPath = path
     }
 
     /// 卸载模型，释放内存
@@ -56,7 +67,7 @@ final class LocalInferenceEngine {
         currentModelPath = nil
     }
 
-    /// 本地流式推理，逐 token 回调
+    /// 本地流式推理，逐 token 回调（onToken 保证在主线程回调）
     func streamInfer(
         messages: [ChatMessage],
         onToken: @escaping (String) -> Void
@@ -114,7 +125,7 @@ final class LocalInferenceEngine {
             let pieceLen = llama_token_to_piece(vocab, newId, &buf, Int32(buf.count), 0, true)
             if pieceLen > 0 {
                 let piece = String(cString: buf)
-                onToken(piece)
+                await MainActor.run { onToken(piece) }
             }
 
             // 继续解码
