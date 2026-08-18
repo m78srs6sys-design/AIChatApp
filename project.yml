@@ -35,14 +35,14 @@ targets:
     # 注：本地离线推理（llama.cpp）依赖已移除，当前为「仅联网对话」版本。
     # 无任何第三方 SPM 依赖，编译更稳定。
 
-    info:
-      # 直接引用完整、规范的 Info.plist（已补全 CFBundleExecutable 等必需键）
-      path: SupportingFiles/Info.plist
-
+    # 直接使用自定义 Info.plist（含权限描述、ATS、深色主题等关键键）
+    # 注意：不要用 XcodeGen 的 info: 生成，否则会覆盖丢失这些键
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.aichat.app
         PRODUCT_NAME: AIChatApp
+        INFOPLIST_FILE: SupportingFiles/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
