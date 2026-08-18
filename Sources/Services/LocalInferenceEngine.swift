@@ -85,9 +85,10 @@ final class LocalInferenceEngine {
         tokens = Array(tokens.prefix(Int(n)))
 
         // 解码 prompt
+        let tokenCount = tokens.count
         var decodeFailed = false
         tokens.withUnsafeMutableBufferPointer { buf in
-            let batch = llama_batch_get_one(buf.baseAddress, Int32(tokens.count))
+            let batch = llama_batch_get_one(buf.baseAddress, Int32(tokenCount))
             if llama_decode(context, batch) != 0 {
                 decodeFailed = true
             }
