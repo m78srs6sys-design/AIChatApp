@@ -6,27 +6,58 @@ struct MessageBubble: View {
     let message: ChatMessage
     @EnvironmentObject private var chatVM: ChatViewModel
 
+    // 多选删除支持
+    var isSelectionMode: Bool = false
+    var isSelected: Bool = false
+    var onSelect: (() -> Void)? = nil
+    var onDeleteRequested: (() -> Void)? = nil
+
+    @State private var showReasoning: Bool = false
+
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            if message.role == .user {
-                Spacer(minLength: 48)
-            } else {
-                // AI 头像
-                ZStack {
-                    Circle()
-                        .fill(AppTheme.accent.opacity(0.15))
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(AppTheme.accent)
-                }
-                .frame(width: 36, height: 36)
+        HStack(alignment: .top, spacing: 8) {
+            // 多选模式：前导勾选圈
+            if isSelectionMode {
+                selectionCircle
+                    .onTapGesture { onSelect?() }
             }
 
-            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
-                bubbleContent
-                attachmentViews
+            HStack(alignment: .top, spacing: 10) {
+                if message.role == .user {
+                    Spacer(minLength: 48)
+                } else {
+                    // AI 头像
+                    ZStack {
+                        Circle()
+                            .fill(AppTheme.accent.opacity(0.15))
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(AppTheme.accent)
+                    }
+                    .frame(width: 36, height: 36)
+                }
+
+                VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
+                    // 深度思考过程（可展开/收起的小字）
+                    if message.role == .assistant, !message.reasoning.isEmpty {
+                        reasoningView
+                    }
+                    bubbleContent
+                    attachmentViews
+                }
+
+                if message.role == .assistant {
+                    Spacer(minLength: 48)
+                }
             }
-            .contextMenu {
+        }
+        .padding(.horizontal, 0)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if isSelectionMode { onSelect?() }
+        }
+        .contextMenu {
+            if !isSelectionMode {
                 if !message.content.isEmpty {
                     Button {
                         UIPasteboard.general.string = message.content
@@ -35,22 +66,66 @@ struct MessageBubble: View {
                     }
                 }
                 Button(role: .destructive) {
-                    chatVM.deleteMessage(message)
+                    onDeleteRequested?()
                 } label: {
                     Label("删除此消息", systemImage: "trash")
                 }
             }
+        }
+        .transition(.asymmetric(
+            insertion: .scale(scale: 0.96, anchor: message.role == .user ? .trailing : .leading)
+                .combined(with: .opacity),
+            removal: .scale(scale: 0.6)
+                .combined(with: .opacity)
+                .combined(with: .move(edge: message.role == .user ? .trailing : .leading))
+        ))
+    }
 
-            if message.role == .assistant {
-                Spacer(minLength: 48)
+    private var selectionCircle: some View {
+        ZStack {
+            Circle()
+                .fill(isSelected ? AppTheme.accent : Color.clear)
+                .frame(width: 24, height: 24)
+                .overlay(
+                    Circle().stroke(isSelected ? AppTheme.accent : AppTheme.secondaryText, lineWidth: 2)
+                )
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 4)
-        .transition(.asymmetric(
-            insertion: .move(edge: message.role == .user ? .trailing : .leading).combined(with: .opacity),
-            removal: .opacity
-        ))
+        .padding(.top, 14)
+    }
+
+    /// 深度思考过程：可展开/收起的小字
+    private var reasoningView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { showReasoning.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "brain")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("深度思考过程")
+                        .font(.system(size: 11, weight: .medium))
+                    Image(systemName: showReasoning ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9))
+                }
+                .foregroundColor(AppTheme.accentSoft)
+            }
+            if showReasoning {
+                Text(message.reasoning)
+                    .font(.system(size: 12))
+                    .foregroundColor(AppTheme.tertiaryText)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppTheme.surface.opacity(0.6))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
     }
 
     @ViewBuilder
@@ -115,7 +190,7 @@ struct MessageBubble: View {
     }
 }
 
-/// 附件展示（图片 / 定位 / 搜索结果）
+/// 附件展示（图片 / 定位 / 搜索结果 / 天气 / 网页）
 struct AttachmentView: View {
     let attachment: MessageAttachment
 
