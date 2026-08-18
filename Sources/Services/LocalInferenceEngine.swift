@@ -117,7 +117,7 @@ final class LocalInferenceEngine {
             }
 
             // 继续解码
-            let single = [newId]
+            var single = [newId]
             let decodeRC = single.withUnsafeMutableBufferPointer { buf in
                 let b = llama_batch_get_one(buf.baseAddress, 1)
                 return llama_decode(context, b)
