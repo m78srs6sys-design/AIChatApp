@@ -29,19 +29,12 @@ struct APISettings: Codable {
     }
 }
 
-/// 联网引擎类型
+/// 联网引擎类型（仅保留 OpenAI 兼容接口）
 enum APIEngine: String, Codable, CaseIterable {
     case openAICompatible = "OpenAI 兼容接口"
-    case minimax = "MiniMax 文本生成"
 
     var endpoint: String {
-        switch self {
-        case .openAICompatible:
-            return "/v1/chat/completions"
-        case .minimax:
-            // MiniMax Chat Completions 端点
-            return "/v1/text/chatcompletion_v2"
-        }
+        "/v1/chat/completions"
     }
 }
 
@@ -52,7 +45,6 @@ enum APIPreset: String, CaseIterable, Identifiable {
     case qwen
     case glm
     case kimi
-    case miniMax
 
     var id: String { rawValue }
 
@@ -63,7 +55,6 @@ enum APIPreset: String, CaseIterable, Identifiable {
         case .qwen: return "通义千问"
         case .glm: return "智谱 GLM"
         case .kimi: return "Kimi (Moonshot)"
-        case .miniMax: return "MiniMax"
         }
     }
 
@@ -74,7 +65,6 @@ enum APIPreset: String, CaseIterable, Identifiable {
         case .qwen: return "https://dashscope.aliyuncs.com/compatible-mode/v1"
         case .glm: return "https://open.bigmodel.cn/api/paas/v4"
         case .kimi: return "https://api.moonshot.cn/v1"
-        case .miniMax: return "https://api.minimax.chat/v1"
         }
     }
 
@@ -85,7 +75,6 @@ enum APIPreset: String, CaseIterable, Identifiable {
         case .qwen: return "qwen-plus"
         case .glm: return "glm-4-flash"
         case .kimi: return "moonshot-v1-8k"
-        case .miniMax: return "MiniMax-Text-01"
         }
     }
 }
