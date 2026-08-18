@@ -54,7 +54,7 @@ struct InputBar: View {
                         Circle().stroke(canSend ? Color.clear : AppTheme.border.opacity(0.5), lineWidth: 0.5)
                     )
             }
-            .buttonStyle(BounceButtonStyle)
+            .buttonStyle(BounceButtonStyle())
             .disabled(!canSend && !isGenerating)
         }
         .padding(.horizontal, 16)
