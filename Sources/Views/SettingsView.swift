@@ -73,6 +73,23 @@ struct SettingsView: View {
                         }
                     }
 
+                    // 其他设置
+                    section(title: "其他设置") {
+                        VStack(spacing: 14) {
+                            toggleRow(
+                                title: "允许 AI 调用联网功能",
+                                subtitle: "开启后，AI 可在需要时主动搜索、查天气、读网页、生成图片",
+                                isOn: onlineFeaturesBinding
+                            )
+                            Divider().background(AppTheme.divider)
+                            toggleRow(
+                                title: "逐字震动反馈",
+                                subtitle: "生成每个字时触发极短震动（可在安静环境关闭）",
+                                isOn: hapticBinding
+                            )
+                        }
+                    }
+
                     // 保存按钮
                     Button {
                         settingsVM.save()
@@ -87,16 +104,26 @@ struct SettingsView: View {
                     }
                     .buttonStyle(BounceButtonStyle())
 
-                    // iCloud 同步状态提示
-                    HStack(spacing: 6) {
-                        Image(systemName: ICloudSettingsStore.isUsingiCloud ? "icloud.fill" : "icloud.slash")
-                            .font(.system(size: 12))
-                        Text(ICloudSettingsStore.isUsingiCloud
-                             ? "设置已同步至 iCloud：卸载重装后自动恢复"
-                             : "iCloud 不可用，设置仅保存在本机（重装需重填）")
-                            .font(.system(size: 12))
+                    // 设置持久化状态提示
+                    VStack(spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "key.fill")
+                                .font(.system(size: 12))
+                            Text("设置已加密保存至钥匙串：卸载重装后自动恢复")
+                                .font(.system(size: 12))
+                        }
+                        .foregroundColor(AppTheme.success)
+
+                        HStack(spacing: 6) {
+                            Image(systemName: ICloudSettingsStore.iCloudAvailable ? "icloud.fill" : "icloud.slash")
+                                .font(.system(size: 12))
+                            Text(ICloudSettingsStore.iCloudAvailable
+                                 ? "iCloud 同步已开启：多设备共享设置"
+                                 : "iCloud 同步不可用（需签名描述文件含 iCloud 能力，否则仅本机/钥匙串）")
+                                .font(.system(size: 12))
+                        }
+                        .foregroundColor(ICloudSettingsStore.iCloudAvailable ? AppTheme.success : AppTheme.warning)
                     }
-                    .foregroundColor(ICloudSettingsStore.isUsingiCloud ? AppTheme.success : AppTheme.warning)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 8)
 
@@ -117,8 +144,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func section<C: View>(title: String, @ViewBuilder content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func section<C: View>(title: String, @ViewBuilder content: () -> C) -> some View {        VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(AppTheme.secondaryText)
@@ -130,6 +156,35 @@ struct SettingsView: View {
             .background(AppTheme.surface)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
         }
+    }
+
+    private var onlineFeaturesBinding: Binding<Bool> {
+        Binding(
+            get: { settingsVM.settings.onlineFeaturesEnabled },
+            set: { settingsVM.settings.onlineFeaturesEnabled = $0; settingsVM.save() }
+        )
+    }
+
+    private var hapticBinding: Binding<Bool> {
+        Binding(
+            get: { settingsVM.settings.hapticPerChar },
+            set: { settingsVM.settings.hapticPerChar = $0; settingsVM.save() }
+        )
+    }
+
+    private func toggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppTheme.primaryText)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundColor(AppTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .toggleStyle(SwitchToggleStyle(tint: AppTheme.accent))
     }
 
     private func settingField(title: String, placeholder: String, text: Binding<String>, secure: Bool = false) -> some View {
