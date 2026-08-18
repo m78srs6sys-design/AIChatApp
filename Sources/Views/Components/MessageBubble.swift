@@ -4,6 +4,7 @@ import UIKit
 /// 单条消息气泡：用户(右·亮色) / AI(左·深色磨砂)
 struct MessageBubble: View {
     let message: ChatMessage
+    @EnvironmentObject private var chatVM: ChatViewModel
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -32,6 +33,11 @@ struct MessageBubble: View {
                     } label: {
                         Label("复制内容", systemImage: "doc.on.doc")
                     }
+                }
+                Button(role: .destructive) {
+                    chatVM.deleteMessage(message)
+                } label: {
+                    Label("删除此消息", systemImage: "trash")
                 }
             }
 
