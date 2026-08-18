@@ -5,6 +5,7 @@ struct AIChatApp: App {
     @StateObject private var chatVM = ChatViewModel()
     @StateObject private var settingsVM = SettingsViewModel()
     @StateObject private var modelManager = LocalModelManager()
+    @StateObject private var store = ConversationStore.shared
 
     init() {
         // 强制深色主题
@@ -17,6 +18,7 @@ struct AIChatApp: App {
                 .environmentObject(chatVM)
                 .environmentObject(settingsVM)
                 .environmentObject(modelManager)
+                .environmentObject(store)
                 .preferredColorScheme(.dark)
         }
     }
