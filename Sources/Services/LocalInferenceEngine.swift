@@ -85,8 +85,14 @@ final class LocalInferenceEngine {
         tokens = Array(tokens.prefix(Int(n)))
 
         // 解码 prompt
-        var batch = llama_batch_get_one(tokens, Int32(tokens.count))
-        if llama_decode(context, batch) != 0 {
+        var decodeFailed = false
+        tokens.withUnsafeMutableBufferPointer { buf in
+            let batch = llama_batch_get_one(buf.baseAddress, Int32(tokens.count))
+            if llama_decode(context, batch) != 0 {
+                decodeFailed = true
+            }
+        }
+        if decodeFailed {
             throw ChatError.inferenceFailed("prompt 解码失败")
         }
 
@@ -112,8 +118,11 @@ final class LocalInferenceEngine {
 
             // 继续解码
             let single = [newId]
-            batch = llama_batch_get_one(single, 1)
-            if llama_decode(context, batch) != 0 { break }
+            let decodeRC = single.withUnsafeMutableBufferPointer { buf in
+                let b = llama_batch_get_one(buf.baseAddress, 1)
+                return llama_decode(context, b)
+            }
+            if decodeRC != 0 { break }
         }
     }
 
