@@ -9,6 +9,9 @@ options:
     iOS: "16.0"
   createIntermediateGroups: true
   groupSortPosition: top
+  # 关键：固定生成 Xcode 15 兼容的工程格式（objectVersion 56），
+  # 否则新版 XcodeGen 会生成 Xcode 16 专用的 objectVersion 77，Xcode 15.4 无法读取。
+  xcodeVersion: "15.0"
 
 settings:
   base:
