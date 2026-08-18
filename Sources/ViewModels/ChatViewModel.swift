@@ -36,6 +36,12 @@ final class ChatViewModel: ObservableObject {
         errorMessage = nil
     }
 
+    // MARK: - Delete
+    func deleteMessage(_ message: ChatMessage) {
+        messages.removeAll { $0.id == message.id }
+        persist()
+    }
+
     // MARK: - Send
     func send(settings: APISettings, activeModel: LocalModel?) {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
