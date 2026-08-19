@@ -371,7 +371,7 @@ final class ChatViewModel: ObservableObject {
 
         case "web":
             if let page = try? await skillService.fetchWebpage(url: content) {
-                return ([.webpage(page)], "网页「\(page.title)」内容：\n\(page.summary.prefix(500))")
+                return ([.webpage(page)], "网页「\(page.title)」内容：\n\(page.summary.prefix(2000))")
             }
             return ([], "网页抓取「\(content)」失败。")
 
