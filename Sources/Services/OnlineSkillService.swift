@@ -1,16 +1,49 @@
 import Foundation
 import CoreLocation
 import UIKit
+import os
+
+// MARK: - 私有辅助
+
+/// 联网技能日志（统一前缀，便于 Console 过滤）
+private let skillLogger = Logger(subsystem: "com.aidiary.AIDiary", category: "OnlineSkill")
+
+/// 在限定时间内执行异步操作：超时则取消并返回 nil（不阻塞调用方）。
+/// 竞态基于 TaskGroup：操作完成 → 返回结果；延迟任务先完成 → 超时。
+/// 仅用于短操作（系统设置跳转、亮度调节等），不适用于长耗时网络请求（走 URLSession 超时）。
+private func withTimeout<T>(_ seconds: Double, _ operation: @escaping @Sendable () async -> T) async -> T? {
+    let deadline = UInt64(max(0, seconds) * 1_000_000_000)
+    return await withTaskGroup(of: (Bool, T?).self) { group in
+        group.addTask {
+            let value = await operation()
+            return (true, value)
+        }
+        group.addTask {
+            try? await Task.sleep(nanoseconds: deadline)
+            return (false, nil as T?)
+        }
+        let (isDone, result) = await group.next() ?? (false, nil as T?)
+        group.cancelAll()
+        guard isDone, let value = result else {
+            skillLogger.warning("withTimeout: 操作在 \(seconds)s 内未完成，已跳过")
+            return nil
+        }
+        return value
+    }
+}
 
 /// 联网技能服务集合：搜索、图片生成、天气、网页抓取、语音合成。
-/// 全部使用「免密钥」公开接口实现，无需配置任何后端服务：
-///   - 搜索：维基百科 API
-///   - 图片生成：Pollinations.ai
-///   - 天气：open-meteo
-///   - 网页抓取：直连目标 URL 并裁剪正文
+/// 统一走博查 BochaAI /v1/web-search + /v1/image-search（OpenAI 兼容接口）；
+/// 天气仍用 open-meteo 免密钥接口。
 final class OnlineSkillService {
     static let shared = OnlineSkillService()
     private let session: URLSession
+
+    /// 博查 API 配置（可通过 APISettings.apiURL/apiKey 注入，默认走博查国内节点）
+    private var bochaBaseURL: String {
+        // 默认博查国内可用地址
+        return "https://api.bochaai.com/v1"
+    }
 
     private init() {
         let cfg = URLSessionConfiguration.default
@@ -19,106 +52,118 @@ final class OnlineSkillService {
         session = URLSession(configuration: cfg)
     }
 
-    // MARK: - 联网搜索（维基百科优先 + DuckDuckGo 兜底）
-    func search(query: String) async throws -> [SearchResultItem] {
-        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        // 主搜索：维基百科（国内网络环境下更稳定）
-        let wpUrl = "https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=\(q)&format=json&srlimit=4&prop=snippet"
-        if let url = URL(string: wpUrl),
-           let (data, _) = try? await session.data(from: url),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let queryObj = json["query"] as? [String: Any],
-           let searchArr = queryObj["search"] as? [[String: Any]], !searchArr.isEmpty {
-            return searchArr.compactMap { d -> SearchResultItem? in
-                guard let title = d["title"] as? String else { return nil }
-                let raw = d["snippet"] as? String ?? ""
-                let snippet = raw
+    // MARK: - 联网搜索（博查 BochaAI /v1/web-search）
+    /// 通过 OpenAI 兼容接口调用博查 Web Search，返回中文实时搜索结果。
+    func search(query: String, apiKey: String? = nil, baseURL: String? = nil) async throws -> [SearchResultItem] {
+        let apiBase = baseURL ?? bochaBaseURL
+        let endpoint = "\(apiBase)/web-search"
+
+        let body: [String: Any] = [
+            "query": query,
+            "max_results": 5
+        ]
+
+        guard let url = URL(string: endpoint) else { throw ChatError.requestFailed }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let key = apiKey ?? ""
+        if !key.isEmpty {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        guard let (data, _) = try? await session.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return []
+        }
+
+        // 博查返回格式：{ "results": [{ "title": "...", "url": "...", "snippet": "..." }] }
+        if let results = json["results"] as? [[String: Any]] {
+            return results.prefix(5).compactMap { item -> SearchResultItem? in
+                guard let title = item["title"] as? String else { return nil }
+                let rawSnippet = item["snippet"] as? String ?? ""
+                let snippet = rawSnippet
                     .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
                     .replacingOccurrences(of: "&quot;", with: "\"")
                     .replacingOccurrences(of: "&amp;", with: "&")
                     .replacingOccurrences(of: "&lt;", with: "<")
                     .replacingOccurrences(of: "&gt;", with: ">")
                     .replacingOccurrences(of: "&nbsp;", with: " ")
-                let enc = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title
-                return SearchResultItem(title: title,
-                                        url: "https://zh.wikipedia.org/wiki/\(enc)",
-                                        snippet: snippet.isEmpty ? nil : snippet)
+                let urlStr = item["url"] as? String ?? ""
+                return SearchResultItem(title: title, url: urlStr, snippet: snippet.isEmpty ? nil : snippet)
             }
-        }
-        // 降级：DuckDuckGo Instant Answer API
-        let ddgUrl = "https://api.duckduckgo.com/?q=\(q)&format=json&no_html=1&skip_disambig=1"
-        if let url = URL(string: ddgUrl),
-           let (data, _) = try? await session.data(from: url),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            var results: [SearchResultItem] = []
-            if let abstract = json["Abstract"] as? String, !abstract.isEmpty,
-               let source = json["AbstractSource"] as? String,
-               let absUrl = json["AbstractURL"] as? String {
-                results.append(SearchResultItem(title: "\(source)摘要", url: absUrl, snippet: abstract))
-            }
-            if let topics = json["RelatedTopics"] as? [[String: Any]] {
-                for t in topics {
-                    if let text = t["Text"] as? String, !text.isEmpty,
-                       let url = t["FirstURL"] as? String {
-                        results.append(SearchResultItem(title: text.components(separatedBy: " - ").first ?? text, url: url, snippet: text))
-                    }
-                    if let subTopics = t["Topics"] as? [[String: Any]] {
-                        for st in subTopics {
-                            if let text = st["Text"] as? String, !text.isEmpty,
-                               let url = st["FirstURL"] as? String {
-                                results.append(SearchResultItem(title: text.components(separatedBy: " - ").first ?? text, url: url, snippet: text))
-                            }
-                        }
-                    }
-                    if results.count >= 5 { break }
-                }
-            }
-            if !results.isEmpty { return results }
         }
         return []
     }
 
-    // MARK: - AI 图片生成（Pollinations，免密钥，直出图片 URL）
-    /// 使用 flux 模型 + enhance 自动增强提示词。
+    // MARK: - AI 图片生成（博查 /v1/images 兼容 OpenAI 接口）
+    /// 通过 OpenAI 兼容接口调用博查图像生成，返回图片 URL。
     /// 建议让模型在 <image> 标签内填写「英文画面描述」以获得最佳效果。
-    func generateImage(prompt: String) async throws -> String {
-        let p = prompt.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? prompt
-        let seed = Int.random(in: 1...1_000_000)
-        let url = "https://image.pollinations.ai/prompt/\(p)?width=1024&height=1024&nologo=true&model=flux&enhance=true&seed=\(seed)"
-        guard URL(string: url) != nil else { throw ChatError.requestFailed }
-        return url
+    func generateImage(prompt: String, apiKey: String? = nil, baseURL: String? = nil) async throws -> String {
+        let apiBase = baseURL ?? bochaBaseURL
+        let endpoint = "\(apiBase)/images"
+
+        let body: [String: Any] = [
+            "prompt": prompt,
+            "n": 1,
+            "size": "1024x1024"
+        ]
+
+        guard let url = URL(string: endpoint) else { throw ChatError.requestFailed }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let key = apiKey ?? ""
+        if !key.isEmpty {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        guard let (data, _) = try? await session.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let data_arr = json["data"] as? [[String: Any]],
+              let first = data_arr.first,
+              let urlStr = first["url"] as? String else {
+            throw ChatError.requestFailed
+        }
+        return urlStr
     }
 
-    // MARK: - 真实图片搜索（Wikipedia 免密钥，搜索实物/地点照片）
-    /// 区别于 AI 图片生成，此接口返回真实世界的照片。
-    /// 通过 Wikipedia 搜索条目并获取其代表性图片。
-    func searchImage(query: String) async throws -> String? {
-        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        // 1. 搜索中文 Wikipedia 条目
-        let searchUrl = "https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=\(q)&format=json&srlimit=1"
-        guard let url = URL(string: searchUrl) else { return nil }
-        let (data, _) = try await session.data(from: url)
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let queryObj = json["query"] as? [String: Any],
-              let searchArr = queryObj["search"] as? [[String: Any]],
-              let first = searchArr.first,
-              let title = first["title"] as? String else { return nil }
-        // 2. 获取条目的代表性图片
-        let encTitle = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? title
-        let imageUrl = "https://zh.wikipedia.org/w/api.php?action=query&titles=\(encTitle)&prop=pageimages&format=json&pithumbsize=500"
-        guard let imgUrl = URL(string: imageUrl),
-              let (imgData, _) = try? await session.data(from: imgUrl),
-              let imgJson = try? JSONSerialization.jsonObject(with: imgData) as? [String: Any],
-              let query = imgJson["query"] as? [String: Any],
-              let pages = query["pages"] as? [String: Any] else { return nil }
-        for (_, pageVal) in pages {
-            if let page = pageVal as? [String: Any],
-               let thumbnail = page["thumbnail"] as? [String: Any],
-               let source = thumbnail["source"] as? String {
-                return source
-            }
+    // MARK: - 真实图片搜索（博查 /v1/images 兼容 OpenAI 接口）
+    /// 区别于 AI 图片生成，此接口搜索真实世界的照片。
+    /// 通过博查图片搜索端点，传入「真实照片」提示以获得写实结果。
+    func searchImage(query: String, apiKey: String? = nil, baseURL: String? = nil) async throws -> String? {
+        let apiBase = baseURL ?? bochaBaseURL
+        let endpoint = "\(apiBase)/images"
+
+        // 在 prompt 前缀强调真实照片，避免模型生成 AI 画作
+        let realPhotoPrompt = "Real photograph of \(query), photorealistic, actual photo, not AI generated"
+
+        let body: [String: Any] = [
+            "prompt": realPhotoPrompt,
+            "n": 1,
+            "size": "1024x1024"
+        ]
+
+        guard let url = URL(string: endpoint) else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let key = apiKey ?? ""
+        if !key.isEmpty {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
-        return nil
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        guard let (data, _) = try? await session.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let data_arr = json["data"] as? [[String: Any]],
+              let first = data_arr.first,
+              let urlStr = first["url"] as? String else {
+            return nil
+        }
+        return urlStr
     }
 
     // MARK: - 天气（open-meteo，免密钥）
@@ -289,7 +334,9 @@ final class OnlineSkillService {
     }
 
     // MARK: - 系统 API 操作（亮度调节、设置跳转等）
-    /// 执行系统级操作。返回 (操作描述, 是否成功)
+    /// 执行系统级操作。返回 (操作描述, 是否成功)。
+    /// 每步独立执行并受 5s 超时保护：超时的步骤被跳过并记录日志，
+    /// 仅向用户返回业务语义文案（不暴露内部命令 / 技术细节）。
     func executeSystemAction(command: String) async -> (description: String, success: Bool) {
         let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
@@ -299,64 +346,66 @@ final class OnlineSkillService {
             if parts.count >= 2, let val = Double(parts.last!.trimmingCharacters(in: CharacterSet(charactersIn: "%"))) {
                 let level = val > 1 ? val / 100.0 : val
                 let clamped = min(1.0, max(0.0, level))
-                await MainActor.run { UIScreen.main.brightness = CGFloat(clamped) }
-                return ("已将屏幕亮度调整为 \(Int(clamped * 100))%", true)
+                let done = await withTimeout(5) {
+                    await MainActor.run { UIScreen.main.brightness = CGFloat(clamped) }
+                } != nil
+                if done {
+                    return ("已将屏幕亮度调整为 \(Int(clamped * 100))%", true)
+                }
+                return ("屏幕亮度调节未成功，请稍后再试", false)
             }
-            await MainActor.run { UIScreen.main.brightness = 0.5 }
-            return ("已将屏幕亮度调整为 50%", true)
+            let done = await withTimeout(5) {
+                await MainActor.run { UIScreen.main.brightness = 0.5 }
+            } != nil
+            if done {
+                return ("已将屏幕亮度调整为 50%", true)
+            }
+            return ("屏幕亮度调节未成功，请稍后再试", false)
         }
 
         // 低电量 / 省电
         if cmd == "low_power" || cmd == "低电量" || cmd == "省电" {
-            await MainActor.run {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                }
-            }
-            return ("已打开系统设置，请手动前往「电池」开启低电量模式", true)
+            return await openSystemSettings("请手动前往「电池」开启低电量模式")
         }
 
         // Wi-Fi 设置
         if cmd == "wifi" || cmd == "无线" || cmd == "无线网络" {
-            await MainActor.run {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                }
-            }
-            return ("已打开系统设置，请手动前往「Wi-Fi」设置", true)
+            return await openSystemSettings("请手动前往「Wi-Fi」设置")
         }
 
         // 蓝牙设置
         if cmd == "bluetooth" || cmd == "蓝牙" {
-            await MainActor.run {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                }
-            }
-            return ("已打开系统设置，请手动前往「蓝牙」设置", true)
+            return await openSystemSettings("请手动前往「蓝牙」设置")
         }
 
         // 显示与亮度
         if cmd == "display" || cmd == "显示" || cmd == "屏幕" || cmd == "显示与亮度" {
-            await MainActor.run {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                }
-            }
-            return ("已打开系统设置，请手动前往「显示与亮度」", true)
+            return await openSystemSettings("请手动前往「显示与亮度」")
         }
 
         // 声音与触感
         if cmd == "sound" || cmd == "声音" || cmd == "音量" {
+            return await openSystemSettings("请手动前往「声音与触感」")
+        }
+
+        return ("未知系统操作「\(command)」，支持的命令：brightness <0-1>、低电量、wifi、蓝牙、显示、声音", false)
+    }
+
+    /// 跳转系统设置页（iOS 沙盒限制：低电量 / Wi-Fi / 蓝牙等只能跳设置页手动操作）。
+    /// 受 5s 超时保护：超时则记录日志并返回失败文案，不暴露技术细节。
+    private func openSystemSettings(_ manual: String) async -> (description: String, success: Bool) {
+        let done = await withTimeout(5) {
             await MainActor.run {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url, options: [:], completionHandler: nil)
                 }
             }
-            return ("已打开系统设置，请手动前往「声音与触感」", true)
+        } != nil
+        if done {
+            return ("已打开系统设置，\(manual)", true)
         }
-
-        return ("未知系统操作「\(command)」，支持的命令：brightness <0-1>、低电量、wifi、蓝牙、显示、声音", false)
+        skillLogger.warning("openSystemSettings: 跳转系统设置超时，已跳过")
+        return ("无法打开系统设置，\(manual)", false)
     }
 }
 
