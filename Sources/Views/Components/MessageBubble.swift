@@ -415,6 +415,7 @@ struct WebViewCard: UIViewRepresentable {
         </html>
         """
     }
+}
 
 /// AI 思考中的脉冲点
 struct DotPulse: View {
