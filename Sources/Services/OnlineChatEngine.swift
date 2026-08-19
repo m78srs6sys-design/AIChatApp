@@ -3,11 +3,16 @@ import Foundation
 /// OpenAI 兼容流式对话引擎
 /// 通过标准 chat/completions 协议进行流式输出
 final class OnlineChatEngine {
-    private let session: URLSession
+    /// 使用带超时的独立会话，避免 SSE 长连接挂起导致调用永久卡死
+    private let session: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 40
+        cfg.timeoutIntervalForResource = 90
+        cfg.httpAdditionalHeaders = ["Accept": "text/event-stream"]
+        return URLSession(configuration: cfg)
+    }()
 
-    init(session: URLSession = .shared) {
-        self.session = session
-    }
+    init() {}
 
     /// 发起流式对话请求，逐 token 回调
     /// - onToken: 正文内容增量
