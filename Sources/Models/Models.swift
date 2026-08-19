@@ -34,6 +34,10 @@ enum MessageAttachment: Codable, Hashable {
     case searchResults([SearchResultItem])
     case weather(WeatherInfo)
     case webpage(WebpageSummary)
+    /// HTML 可视化卡片（圆角，WebView 渲染）
+    case htmlCard(html: String)
+    /// 系统操作结果
+    case systemAction(action: String, description: String)
 }
 
 struct SearchResultItem: Codable, Hashable {
