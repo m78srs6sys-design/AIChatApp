@@ -19,41 +19,54 @@ final class OnlineSkillService {
         session = URLSession(configuration: cfg)
     }
 
-    // MARK: - 联网搜索（DuckDuckGo 免密钥 API，更可靠）
+    // MARK: - 联网搜索（维基百科优先 + DuckDuckGo 兜底）
     func search(query: String) async throws -> [SearchResultItem] {
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        // 主搜索：DuckDuckGo Instant Answer API（免密钥，返回摘要 + 相关话题）
+        // 主搜索：维基百科（国内网络环境下更稳定）
+        let wpUrl = "https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=\(q)&format=json&srlimit=4&prop=snippet"
+        if let url = URL(string: wpUrl),
+           let (data, _) = try? await session.data(from: url),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let queryObj = json["query"] as? [String: Any],
+           let searchArr = queryObj["search"] as? [[String: Any]], !searchArr.isEmpty {
+            return searchArr.compactMap { d -> SearchResultItem? in
+                guard let title = d["title"] as? String else { return nil }
+                let raw = d["snippet"] as? String ?? ""
+                let snippet = raw
+                    .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                    .replacingOccurrences(of: "&quot;", with: "\"")
+                    .replacingOccurrences(of: "&amp;", with: "&")
+                    .replacingOccurrences(of: "&lt;", with: "<")
+                    .replacingOccurrences(of: "&gt;", with: ">")
+                    .replacingOccurrences(of: "&nbsp;", with: " ")
+                let enc = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title
+                return SearchResultItem(title: title,
+                                        url: "https://zh.wikipedia.org/wiki/\(enc)",
+                                        snippet: snippet.isEmpty ? nil : snippet)
+            }
+        }
+        // 降级：DuckDuckGo Instant Answer API
         let ddgUrl = "https://api.duckduckgo.com/?q=\(q)&format=json&no_html=1&skip_disambig=1"
         if let url = URL(string: ddgUrl),
            let (data, _) = try? await session.data(from: url),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             var results: [SearchResultItem] = []
-            // 1. 提取摘要（Abstract）
             if let abstract = json["Abstract"] as? String, !abstract.isEmpty,
                let source = json["AbstractSource"] as? String,
                let absUrl = json["AbstractURL"] as? String {
-                results.append(SearchResultItem(
-                    title: "\(source)摘要",
-                    url: absUrl,
-                    snippet: abstract))
+                results.append(SearchResultItem(title: "\(source)摘要", url: absUrl, snippet: abstract))
             }
-            // 2. 提取 RelatedTopics
             if let topics = json["RelatedTopics"] as? [[String: Any]] {
                 for t in topics {
                     if let text = t["Text"] as? String, !text.isEmpty,
                        let url = t["FirstURL"] as? String {
-                        results.append(SearchResultItem(title: text.components(separatedBy: " - ").first ?? text,
-                                                        url: url,
-                                                        snippet: text))
+                        results.append(SearchResultItem(title: text.components(separatedBy: " - ").first ?? text, url: url, snippet: text))
                     }
-                    // 嵌套 Topics（某些分类下还有子话题）
                     if let subTopics = t["Topics"] as? [[String: Any]] {
                         for st in subTopics {
                             if let text = st["Text"] as? String, !text.isEmpty,
                                let url = st["FirstURL"] as? String {
-                                results.append(SearchResultItem(title: text.components(separatedBy: " - ").first ?? text,
-                                                                url: url,
-                                                                snippet: text))
+                                results.append(SearchResultItem(title: text.components(separatedBy: " - ").first ?? text, url: url, snippet: text))
                             }
                         }
                     }
@@ -62,29 +75,7 @@ final class OnlineSkillService {
             }
             if !results.isEmpty { return results }
         }
-        // 降级：维基百科搜索（当 DuckDuckGo 无结果时）
-        let wpUrl = "https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=\(q)&format=json&srlimit=4&prop=snippet"
-        guard let url = URL(string: wpUrl) else { return [] }
-        let (data, resp) = try await session.data(from: url)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let queryObj = json["query"] as? [String: Any],
-              let searchArr = queryObj["search"] as? [[String: Any]] else { return [] }
-        return searchArr.compactMap { d -> SearchResultItem? in
-            guard let title = d["title"] as? String else { return nil }
-            let raw = d["snippet"] as? String ?? ""
-            let snippet = raw
-                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                .replacingOccurrences(of: "&quot;", with: "\"")
-                .replacingOccurrences(of: "&amp;", with: "&")
-                .replacingOccurrences(of: "&lt;", with: "<")
-                .replacingOccurrences(of: "&gt;", with: ">")
-                .replacingOccurrences(of: "&nbsp;", with: " ")
-            let enc = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title
-            return SearchResultItem(title: title,
-                                    url: "https://zh.wikipedia.org/wiki/\(enc)",
-                                    snippet: snippet.isEmpty ? nil : snippet)
-        }
+        return []
     }
 
     // MARK: - AI 图片生成（Pollinations，免密钥，直出图片 URL）
@@ -119,8 +110,8 @@ final class OnlineSkillService {
     /// 通过 Wikipedia 搜索条目并获取其代表性图片。
     func searchImage(query: String) async throws -> String? {
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        // 1. 搜索 Wikipedia 条目
-        let searchUrl = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=\(q)&format=json&srlimit=1"
+        // 1. 搜索中文 Wikipedia 条目
+        let searchUrl = "https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=\(q)&format=json&srlimit=1"
         guard let url = URL(string: searchUrl) else { return nil }
         let (data, _) = try await session.data(from: url)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -130,7 +121,7 @@ final class OnlineSkillService {
               let title = first["title"] as? String else { return nil }
         // 2. 获取条目的代表性图片
         let encTitle = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? title
-        let imageUrl = "https://en.wikipedia.org/w/api.php?action=query&titles=\(encTitle)&prop=pageimages&format=json&pithumbsize=500"
+        let imageUrl = "https://zh.wikipedia.org/w/api.php?action=query&titles=\(encTitle)&prop=pageimages&format=json&pithumbsize=500"
         guard let imgUrl = URL(string: imageUrl),
               let (imgData, _) = try? await session.data(from: imgUrl),
               let imgJson = try? JSONSerialization.jsonObject(with: imgData) as? [String: Any],
@@ -303,72 +294,70 @@ final class OnlineSkillService {
 
     // MARK: - 系统 API 操作（亮度调节、设置跳转等）
     /// 执行系统级操作。返回 (操作描述, 是否成功)
-    func executeSystemAction(command: String) -> (description: String, success: Bool) {
+    func executeSystemAction(command: String) async -> (description: String, success: Bool) {
         let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
-        if cmd == "low_power" || cmd == "低电量" || cmd == "省电" {
-            // 打开设置 → 电池页面（iOS 无法直接编程开启低电量模式）
-            let urlStr = UIApplication.openSettingsURLString + "BATTERY_USAGE"
-            if let url = URL(string: urlStr), UIApplication.shared.canOpenURL(url) {
-                UIApplication.shared.open(url)
-                return ("已打开「设置 → 电池」，请手动开启低电量模式", true)
-            }
-            // 降级：打开设置首页
-            if let url = URL(string: UIApplication.openSettingsURLString) {
-                UIApplication.shared.open(url)
-                return ("已打开系统设置，请手动前往「电池」开启低电量模式", true)
-            }
-            return ("无法打开设置", false)
-        }
-
+        // 亮度调节（UIScreen 直接生效，无需权限）
         if cmd.hasPrefix("brightness") || cmd.hasPrefix("亮度") {
-            // 解析亮度值：brightness 0.5 或 亮度 50%
             let parts = command.components(separatedBy: .whitespaces)
             if parts.count >= 2, let val = Double(parts.last!.trimmingCharacters(in: CharacterSet(charactersIn: "%"))) {
                 let level = val > 1 ? val / 100.0 : val
                 let clamped = min(1.0, max(0.0, level))
-                UIScreen.main.brightness = CGFloat(clamped)
+                await MainActor.run { UIScreen.main.brightness = CGFloat(clamped) }
                 return ("已将屏幕亮度调整为 \(Int(clamped * 100))%", true)
             }
-            // 默认调节到 50%
-            UIScreen.main.brightness = 0.5
+            await MainActor.run { UIScreen.main.brightness = 0.5 }
             return ("已将屏幕亮度调整为 50%", true)
         }
 
+        // 低电量 / 省电
+        if cmd == "low_power" || cmd == "低电量" || cmd == "省电" {
+            await MainActor.run {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                }
+            }
+            return ("已打开系统设置，请手动前往「电池」开启低电量模式", true)
+        }
+
+        // Wi-Fi 设置
         if cmd == "wifi" || cmd == "无线" || cmd == "无线网络" {
-            if let url = URL(string: "App-Prefs:root=WIFI"),
-               UIApplication.shared.canOpenURL(url) {
-                UIApplication.shared.open(url)
-                return ("已打开「设置 → Wi-Fi」", true)
+            await MainActor.run {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                }
             }
-            return ("无法打开 Wi-Fi 设置", false)
+            return ("已打开系统设置，请手动前往「Wi-Fi」设置", true)
         }
 
+        // 蓝牙设置
         if cmd == "bluetooth" || cmd == "蓝牙" {
-            if let url = URL(string: "App-Prefs:root=Bluetooth"),
-               UIApplication.shared.canOpenURL(url) {
-                UIApplication.shared.open(url)
-                return ("已打开「设置 → 蓝牙」", true)
+            await MainActor.run {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                }
             }
-            return ("无法打开蓝牙设置", false)
+            return ("已打开系统设置，请手动前往「蓝牙」设置", true)
         }
 
+        // 显示与亮度
         if cmd == "display" || cmd == "显示" || cmd == "屏幕" || cmd == "显示与亮度" {
-            if let url = URL(string: "App-Prefs:root=DISPLAY"),
-               UIApplication.shared.canOpenURL(url) {
-                UIApplication.shared.open(url)
-                return ("已打开「设置 → 显示与亮度」", true)
+            await MainActor.run {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                }
             }
-            return ("无法打开显示设置", false)
+            return ("已打开系统设置，请手动前往「显示与亮度」", true)
         }
 
+        // 声音与触感
         if cmd == "sound" || cmd == "声音" || cmd == "音量" {
-            if let url = URL(string: "App-Prefs:root=Sounds"),
-               UIApplication.shared.canOpenURL(url) {
-                UIApplication.shared.open(url)
-                return ("已打开「设置 → 声音与触感」", true)
+            await MainActor.run {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                }
             }
-            return ("无法打开声音设置", false)
+            return ("已打开系统设置，请手动前往「声音与触感」", true)
         }
 
         return ("未知系统操作「\(command)」，支持的命令：brightness <0-1>、低电量、wifi、蓝牙、显示、声音", false)
