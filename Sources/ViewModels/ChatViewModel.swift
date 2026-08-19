@@ -89,9 +89,9 @@ final class ChatViewModel: ObservableObject {
             return
         }
 
-        // 系统提示：联网功能全部由大模型主动调用；可链式调用多个工具，最后给出带解释的最终回答
+        // 系统提示：所有附加功能仅当深度思考+联网功能均开启时可用
         var systemPrompt: String? = nil
-        if settings.onlineFeaturesEnabled {
+        if settings.onlineFeaturesEnabled && settings.deepThinking {
             var sp = """
             你是一个会主动使用工具的智能助手。工作流程：
             1) 先在脑中深度思考用户真正需要什么信息。
@@ -101,6 +101,8 @@ final class ChatViewModel: ObservableObject {
                - <weather>城市名 或 "我的位置"</weather> 查询天气
                - <web>网页URL</web> 网页摘要
                - <image>英文画面描述</image> 生成图片
+               - <card>HTML 代码</card> 生成可视化卡片（仅当用户主动要求可视化，或纯文字无法表达清楚时使用；卡片内容需是完整 HTML）
+               - <system>命令</system> 执行系统操作（如 brightness 0.5 调节亮度、低电量 打开电池设置、wifi、蓝牙、显示、声音）
             3) 可以连续调用多个工具来逐步完成任务，例如：先 <location/> 得到所在城市，再 <search>该城市 附近景点</search>，再 <weather>我的位置</weather>。
             4) 收集到足够信息后，用自然语言给出最终回答并解释；需要的数据会自动以卡片形式展示。
             规则：每次只输出一个工具标签；工具标签之外不要写多余文字。当你已经拿到所需信息、准备回答时，不要再输出工具标签，直接写回答。
@@ -372,6 +374,16 @@ final class ChatViewModel: ObservableObject {
             }
             return ([], "无法获取定位（未授权或定位失败）。如需天气 / 周边信息，请直接告诉我城市名。")
 
+        case "card":
+            // HTML 卡片：直接作为附件渲染，不返回文本
+            let card = MessageAttachment.htmlCard(html: content)
+            return ([card], "[HTML 卡片已生成]")
+
+        case "system":
+            let (desc, success) = skillService.executeSystemAction(command: content)
+            let att = MessageAttachment.systemAction(action: content, description: desc)
+            return ([att], "系统操作「\(content)」：\(desc)")
+
         default:
             return ([], "")
         }
@@ -384,6 +396,8 @@ final class ChatViewModel: ObservableObject {
         case "web": return "网页摘要"
         case "image": return "图片生成"
         case "location": return "定位"
+        case "card": return "可视化卡片"
+        case "system": return "系统操作"
         default: return kind
         }
     }
@@ -404,6 +418,8 @@ final class ChatViewModel: ObservableObject {
             case .webpage: return "网页摘要"
             case .image: return "图片"
             case .location: return "定位"
+            case .htmlCard: return "可视化卡片"
+            case .systemAction: return "系统操作"
             }
         }
         return labels.isEmpty ? "（已完成）" : "🛠 已调用：\(labels.joined(separator: "、"))"
@@ -446,8 +462,9 @@ final class ChatViewModel: ObservableObject {
 
     static func extractCalls(_ text: String) -> [(kind: String, content: String)] {
         var results: [(String, String)] = []
+        // 带内容的工具标签
         guard let regex = try? NSRegularExpression(
-            pattern: #"<(search|image|weather|web)>(.*?)</\1>"#,
+            pattern: #"<(search|image|weather|web|card|system)>(.*?)</\1>"#,
             options: [.dotMatchesLineSeparators, .caseInsensitive]) else { return results }
         let ns = text as NSString
         let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
@@ -466,13 +483,12 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// 移除模型回复中的调用标签（仅展示干净文本）
-    /// 覆盖所有工具标签：<search>...</search>、<image>...</image>、<weather>...</weather>、
-    /// <web>...</web>、<location/>、<location></location>
+    /// 覆盖所有工具标签：<search>、<image>、<weather>、<web>、<card>、<system>、<location/>
     static func stripCallTags(_ text: String) -> String {
         var result = text
         // 移除带内容标签：<xxx>...</xxx>
         if let regex = try? NSRegularExpression(
-            pattern: #"<(search|image|weather|web)>(.*?)</\1>"#,
+            pattern: #"<(search|image|weather|web|card|system)>(.*?)</\1>"#,
             options: [.dotMatchesLineSeparators, .caseInsensitive]) {
             result = regex.stringByReplacingMatches(
                 in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
