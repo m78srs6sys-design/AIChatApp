@@ -89,7 +89,7 @@ final class ChatViewModel: ObservableObject {
             return
         }
 
-        // 系统提示：所有附加功能仅当深度思考+联网功能均开启时可用
+        // 系统提示：所有附加功能仅当深度思考+联网附加均开启时可用
         var systemPrompt: String? = nil
         if settings.onlineFeaturesEnabled && settings.deepThinking {
             var sp = """
