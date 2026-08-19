@@ -6,6 +6,8 @@ struct InputBar: View {
     @Binding var voiceMode: Bool
     let isGenerating: Bool
     let onSend: () -> Void
+    /// 强制终止生成的回调
+    var onStop: (() -> Void)? = nil
     /// 语音识别出错时回调（用于弹出错误提示）
     var onVoiceError: ((String) -> Void)? = nil
 
@@ -163,17 +165,23 @@ struct InputBar: View {
     }
 
     private var sendButton: some View {
-        Button(action: onSend) {
+        Button(action: {
+            if isGenerating {
+                onStop?()
+            } else {
+                onSend()
+            }
+        }) {
             Image(systemName: isGenerating ? "stop.fill" : "arrow.up")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundColor(AppTheme.userBubbleText)
                 .frame(width: 30, height: 30)
                 .background(
                     Circle()
-                        .fill(canSend ? AppTheme.accent : AppTheme.surfaceElevated)
+                        .fill(canSend || isGenerating ? AppTheme.accent : AppTheme.surfaceElevated)
                 )
                 .overlay(
-                    Circle().stroke(canSend ? Color.clear : AppTheme.border.opacity(0.5), lineWidth: 0.5)
+                    Circle().stroke(canSend || isGenerating ? Color.clear : AppTheme.border.opacity(0.5), lineWidth: 0.5)
                 )
         }
         .buttonStyle(BounceButtonStyle())
