@@ -99,34 +99,35 @@ struct SettingsView: View {
                                 .fixedSize(horizontal: false, vertical: true)
 
                             ForEach($settingsVM.settings.workflows) { $preset in
+                                let p = preset.wrappedValue
                                 HStack(alignment: .top, spacing: 10) {
                                     Toggle(isOn: $preset.enabled) { EmptyView() }
                                         .labelsHidden()
                                         .toggleStyle(SwitchToggleStyle(tint: AppTheme.accent))
                                         .frame(width: 48)
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(preset.name.isEmpty ? "（未命名方案）" : preset.name)
+                                        Text(p.name.isEmpty ? "（未命名方案）" : p.name)
                                             .font(.system(size: 14, weight: .medium))
                                             .foregroundColor(AppTheme.primaryText)
-                                        if !preset.trigger.isEmpty {
-                                            Text(preset.trigger)
+                                        if !p.trigger.isEmpty {
+                                            Text(p.trigger)
                                                 .font(.system(size: 11))
                                                 .foregroundColor(AppTheme.tertiaryText)
                                                 .fixedSize(horizontal: false, vertical: true)
                                         }
-                                        Text(preset.steps.map { $0.tool.displayName }.joined(separator: " → "))
+                                        Text(p.steps.map { $0.tool.displayName }.joined(separator: " → "))
                                             .font(.system(size: 11, weight: .medium))
                                             .foregroundColor(AppTheme.accent)
                                     }
                                     Spacer(minLength: 4)
                                     Button {
-                                        openEdit(preset.wrappedValue)
+                                        openEdit(p)
                                     } label: {
                                         Image(systemName: "pencil")
                                             .foregroundColor(AppTheme.secondaryText)
                                     }
                                     Button {
-                                        deletePreset(preset.wrappedValue)
+                                        deletePreset(p)
                                     } label: {
                                         Image(systemName: "trash")
                                             .foregroundColor(AppTheme.error)
@@ -308,35 +309,7 @@ struct WorkflowEditor: View {
                         .foregroundColor(AppTheme.primaryText)
                         .padding(.horizontal, 4)
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("步骤（按从上到下的顺序执行）")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(AppTheme.secondaryText)
-                            .padding(.horizontal, 4)
-
-                        ForEach(Array(preset.wrappedValue.steps.indices), id: \.self) { i in
-                            WorkflowStepCard(
-                                step: $preset.steps[i],
-                                index: i,
-                                total: preset.wrappedValue.steps.count,
-                                onMoveUp: { preset.steps.wrappedValue.move(fromOffsets: [i], toOffset: i - 1) },
-                                onMoveDown: { preset.steps.wrappedValue.move(fromOffsets: [i], toOffset: i + 1) },
-                                onDelete: { preset.steps.wrappedValue.remove(at: i) }
-                            )
-                        }
-
-                        Button {
-                            preset.steps.wrappedValue.append(ToolStep(tool: .search, param: ""))
-                        } label: {
-                            Label("添加步骤", systemImage: "plus.circle.fill")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(AppTheme.accent)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(AppTheme.accent.opacity(0.12))
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
-                    }
+                    stepsSection
                 }
                 .padding(16)
             }
@@ -348,15 +321,55 @@ struct WorkflowEditor: View {
                     Button("取消") { onCancel() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") {
-                        var r = preset.wrappedValue
-                        if r.name.trimmingCharacters(in: .whitespaces).isEmpty { r.name = "未命名方案" }
-                        onSave(r)
-                    }
-                    .fontWeight(.semibold)
+                    Button("完成") { saveAndDismiss() }
+                        .fontWeight(.semibold)
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var stepsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("步骤（按从上到下的顺序执行）")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(AppTheme.secondaryText)
+                .padding(.horizontal, 4)
+
+            ForEach(Array(preset.wrappedValue.steps.indices), id: \.self) { i in
+                WorkflowStepCard(
+                    step: $preset.steps[i],
+                    index: i,
+                    total: preset.wrappedValue.steps.count,
+                    onMoveUp: { moveStep(i, to: i - 1) },
+                    onMoveDown: { moveStep(i, to: i + 1) },
+                    onDelete: { preset.steps.wrappedValue.remove(at: i) }
+                )
+            }
+
+            Button {
+                preset.steps.wrappedValue.append(ToolStep(tool: .search, param: ""))
+            } label: {
+                Label("添加步骤", systemImage: "plus.circle.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(AppTheme.accent)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(AppTheme.accent.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+    }
+
+    private func moveStep(_ from: Int, to: Int) {
+        guard to >= 0, to <= preset.wrappedValue.steps.count else { return }
+        preset.wrappedValue.steps.move(fromOffsets: [from], toOffset: to)
+    }
+
+    private func saveAndDismiss() {
+        var r = preset.wrappedValue
+        if r.name.trimmingCharacters(in: .whitespaces).isEmpty { r.name = "未命名方案" }
+        onSave(r)
     }
 
     private func fieldBlock(title: String, placeholder: String, text: Binding<String>) -> some View {
@@ -387,46 +400,57 @@ struct WorkflowStepCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("步骤 \(index + 1)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(AppTheme.secondaryText)
-                Spacer()
-                HStack(spacing: 16) {
-                    if index > 0 {
-                        Button(action: onMoveUp) { Image(systemName: "arrow.up").font(.system(size: 14)) }
-                    }
-                    if index < total - 1 {
-                        Button(action: onMoveDown) { Image(systemName: "arrow.down").font(.system(size: 14)) }
-                    }
-                    Button(action: onDelete) { Image(systemName: "trash").font(.system(size: 14)) }
-                }
-                .foregroundColor(AppTheme.secondaryText)
-            }
-
-            Picker("工具", selection: $step.tool) {
-                ForEach(ToolKind.allCases) { tk in
-                    Text(tk.displayName).tag(tk)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            if step.wrappedValue.tool.needsParam {
-                TextField("参数（如：附近 景点 推荐 / 我的位置）", text: $step.param)
-                    .font(.system(size: 14))
-                    .foregroundColor(AppTheme.primaryText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(AppTheme.surfaceElevated)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            } else {
-                Text("该工具无需参数")
-                    .font(.system(size: 12))
-                    .foregroundColor(AppTheme.tertiaryText)
-            }
+            headerRow
+            toolPicker
+            paramRow
         }
         .padding(12)
         .background(AppTheme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var headerRow: some View {
+        HStack {
+            Text("步骤 \(index + 1)")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(AppTheme.secondaryText)
+            Spacer()
+            HStack(spacing: 16) {
+                if index > 0 {
+                    Button(action: onMoveUp) { Image(systemName: "arrow.up").font(.system(size: 14)) }
+                }
+                if index < total - 1 {
+                    Button(action: onMoveDown) { Image(systemName: "arrow.down").font(.system(size: 14)) }
+                }
+                Button(action: onDelete) { Image(systemName: "trash").font(.system(size: 14)) }
+            }
+            .foregroundColor(AppTheme.secondaryText)
+        }
+    }
+
+    private var toolPicker: some View {
+        Picker("工具", selection: $step.tool) {
+            ForEach(ToolKind.allCases) { tk in
+                Text(tk.displayName).tag(tk)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    @ViewBuilder
+    private var paramRow: some View {
+        if step.wrappedValue.tool.needsParam {
+            TextField("参数（如：附近 景点 推荐 / 我的位置）", text: $step.param)
+                .font(.system(size: 14))
+                .foregroundColor(AppTheme.primaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(AppTheme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else {
+            Text("该工具无需参数")
+                .font(.system(size: 12))
+                .foregroundColor(AppTheme.tertiaryText)
+        }
     }
 }
