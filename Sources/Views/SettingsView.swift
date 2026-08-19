@@ -98,10 +98,13 @@ struct SettingsView: View {
                                 .foregroundColor(AppTheme.tertiaryText)
                                 .fixedSize(horizontal: false, vertical: true)
 
-                            ForEach($settingsVM.settings.workflows) { $preset in
-                                let p = preset.wrappedValue
+                            ForEach(Array(settingsVM.settings.workflows.indices), id: \.self) { idx in
+                                let p = settingsVM.settings.workflows[idx]
                                 HStack(alignment: .top, spacing: 10) {
-                                    Toggle(isOn: $preset.enabled) { EmptyView() }
+                                    Toggle(isOn: Binding(
+                                        get: { settingsVM.settings.workflows[idx].enabled },
+                                        set: { settingsVM.settings.workflows[idx].enabled = $0 }
+                                    )) { EmptyView() }
                                         .labelsHidden()
                                         .toggleStyle(SwitchToggleStyle(tint: AppTheme.accent))
                                         .frame(width: 48)
@@ -336,19 +339,19 @@ struct WorkflowEditor: View {
                 .foregroundColor(AppTheme.secondaryText)
                 .padding(.horizontal, 4)
 
-            ForEach(Array(preset.wrappedValue.steps.indices), id: \.self) { i in
+            ForEach(Array(preset.steps.indices), id: \.self) { i in
                 WorkflowStepCard(
                     step: $preset.steps[i],
                     index: i,
-                    total: preset.wrappedValue.steps.count,
+                    total: preset.steps.count,
                     onMoveUp: { moveStep(i, to: i - 1) },
                     onMoveDown: { moveStep(i, to: i + 1) },
-                    onDelete: { preset.steps.wrappedValue.remove(at: i) }
+                    onDelete: { preset.steps.remove(at: i) }
                 )
             }
 
             Button {
-                preset.steps.wrappedValue.append(ToolStep(tool: .search, param: ""))
+                preset.steps.append(ToolStep(tool: .search, param: ""))
             } label: {
                 Label("添加步骤", systemImage: "plus.circle.fill")
                     .font(.system(size: 13, weight: .medium))
@@ -362,12 +365,12 @@ struct WorkflowEditor: View {
     }
 
     private func moveStep(_ from: Int, to: Int) {
-        guard to >= 0, to <= preset.wrappedValue.steps.count else { return }
-        preset.wrappedValue.steps.move(fromOffsets: [from], toOffset: to)
+        guard to >= 0, to <= preset.steps.count else { return }
+        preset.steps.move(fromOffsets: [from], toOffset: to)
     }
 
     private func saveAndDismiss() {
-        var r = preset.wrappedValue
+        var r = preset
         if r.name.trimmingCharacters(in: .whitespaces).isEmpty { r.name = "未命名方案" }
         onSave(r)
     }
@@ -439,7 +442,7 @@ struct WorkflowStepCard: View {
 
     @ViewBuilder
     private var paramRow: some View {
-        if step.wrappedValue.tool.needsParam {
+        if step.tool.needsParam {
             TextField("参数（如：附近 景点 推荐 / 我的位置）", text: $step.param)
                 .font(.system(size: 14))
                 .foregroundColor(AppTheme.primaryText)
