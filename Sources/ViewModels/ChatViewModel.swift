@@ -466,12 +466,24 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// 移除模型回复中的调用标签（仅展示干净文本）
+    /// 覆盖所有工具标签：<search>...</search>、<image>...</image>、<weather>...</weather>、
+    /// <web>...</web>、<location/>、<location></location>
     static func stripCallTags(_ text: String) -> String {
-        guard let regex = try? NSRegularExpression(
+        var result = text
+        // 移除带内容标签：<xxx>...</xxx>
+        if let regex = try? NSRegularExpression(
             pattern: #"<(search|image|weather|web)>(.*?)</\1>"#,
-            options: [.dotMatchesLineSeparators, .caseInsensitive]) else { return text }
-        let cleaned = regex.stringByReplacingMatches(
-            in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
-        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+            options: [.dotMatchesLineSeparators, .caseInsensitive]) {
+            result = regex.stringByReplacingMatches(
+                in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        // 移除自闭合标签：<location/>、<location></location>
+        if let locRegex = try? NSRegularExpression(
+            pattern: #"<location\s*/?>(\s*</location>)?"#,
+            options: [.caseInsensitive]) {
+            result = locRegex.stringByReplacingMatches(
+                in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
