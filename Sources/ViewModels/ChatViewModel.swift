@@ -179,7 +179,7 @@ final class ChatViewModel: ObservableObject {
                     calledTools.insert(callKey)
                     let label = Self.toolLabel(kind)
                     statusMessage = "正在调用工具：\(label)…"
-                    let (att, resultText) = await executeCallWithResult(kind: kind, content: content)
+                    let (att, resultText) = await executeCallWithResult(kind: kind, content: content, settings: settings)
                     attachments.append(contentsOf: att)
                     toolTurns.append(ChatMessage(role: .user,
                         content: "[工具结果：\(label)]\n\(resultText)"))
@@ -344,7 +344,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     // MARK: - AI 主动调用的联网功能执行（返回附件 + 工具结果文本）
-    private func executeCallWithResult(kind: String, content: String) async -> ([MessageAttachment], String) {
+    private func executeCallWithResult(kind: String, content: String, settings: APISettings) async -> ([MessageAttachment], String) {
         switch kind {
         case "search":
             var q = content
@@ -352,7 +352,7 @@ final class ChatViewModel: ObservableObject {
                ["附近", "周边", "这里", "我的位置", "当前位置"].contains(where: { q.contains($0) }) {
                 q = "\(q)（\(loc.city)）"
             }
-            if let results = try? await skillService.search(query: q), !results.isEmpty {
+            if let results = try? await skillService.search(query: q, apiKey: settings.apiKey, baseURL: settings.apiURL), !results.isEmpty {
                 let text = results.prefix(3).map { "· \($0.title)：\($0.snippet ?? "")" }.joined(separator: "\n")
                 return ([.searchResults(results)], "搜索「\(content)」结果：\n\(text)")
             }
@@ -376,13 +376,17 @@ final class ChatViewModel: ObservableObject {
             return ([], "网页抓取「\(content)」失败。")
 
         case "image":
-            if let url = try? await skillService.generateImage(prompt: content) {
+            if let url = try? await skillService.generateImage(prompt: content, apiKey: settings.apiKey, baseURL: settings.apiURL) {
                 return ([.image(url: url)], "已生成图片：\(content)")
             }
             return ([], "图片生成失败。")
 
         case "imagesearch":
-            if let url = try? await skillService.searchImage(query: content) {
+            if let url = try? await skillService.searchImage(
+                query: content,
+                apiKey: settings.apiKey,
+                baseURL: settings.apiURL
+            ) {
                 return ([.image(url: url)], "已找到「\(content)」的真实图片")
             }
             return ([], "未找到「\(content)」的真实图片。")
