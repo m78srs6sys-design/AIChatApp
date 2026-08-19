@@ -350,27 +350,35 @@ struct AttachmentView: View {
     }
 }
 
-/// HTML 可视化卡片（圆角，WKWebView 渲染）
+/// HTML 可视化卡片（圆角，WKWebView 渲染，带防御性错误处理）
+/// 加载失败时不暴露原始 HTML，统一降级为「该链接暂不支持预览」
 struct WebViewCard: UIViewRepresentable {
     let html: String
+    @State private var hasError: Bool = false
 
-    func makeUIView(context: Context) -> WKWebView {
+    func makeUIView(context: Context) -> ErrorHandlingHostingView {
         let config = WKWebViewConfiguration()
-        // 禁止用户交互（滚动/点击等），纯展示
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isUserInteractionEnabled = false
         webView.scrollView.isScrollEnabled = false
-        webView.backgroundColor = UIColor.clear
+        webView.backgroundColor = .clear
         webView.isOpaque = false
-        webView.loadHTMLString(wrappedHTML, baseURL: nil)
-        return webView
+        webView.navigationDelegate = context.coordinator
+        
+        let hostingView = ErrorHandlingHostingView(webView: webView, hasError: $hasError)
+        hostingView.load(html: wrappedHTML)
+        return hostingView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {
-        webView.loadHTMLString(wrappedHTML, baseURL: nil)
+    func updateUIView(_ view: ErrorHandlingHostingView, context: Context) {
+        context.coordinator.resetErrorIfNeeded()
+        view.load(html: wrappedHTML)
     }
 
-    /// 包裹 HTML，添加深色主题适配
+    func makeCoordinator() -> WebViewCoordinator {
+        WebViewCoordinator()
+    }
+
     private var wrappedHTML: String {
         """
         <!DOCTYPE html>
@@ -387,7 +395,6 @@ struct WebViewCard: UIViewRepresentable {
                 padding: 14px;
                 line-height: 1.5;
             }
-            /* 圆角卡片容器 */
             .card {
                 background: rgba(30, 28, 46, 0.85);
                 border-radius: 16px;
@@ -414,6 +421,103 @@ struct WebViewCard: UIViewRepresentable {
         <body><div class="card">\(html)</div></body>
         </html>
         """
+    }
+}
+
+/// 协调器：捕获加载失败事件
+private final class WebViewCoordinator: NSObject, WKNavigationDelegate {
+    @MainActor var hasError: Bool = false
+    
+    func resetErrorIfNeeded() {
+        hasError = false
+    }
+    
+    func markError() {
+        hasError = true
+    }
+
+    func webView(_ webView: WKWebView,
+                 didFail navigation: WKNavigation!,
+                 withError error: Error) {
+        markError()
+    }
+
+    func webView(_ webView: WKWebView,
+                 didFailProvisionalNavigation navigation: WKNavigation!,
+                 withError error: Error) {
+        markError()
+    }
+}
+
+/// 自定义宿主视图：包含 WKWebView + 错误降级叠加层
+private final class ErrorHandlingHostingView: UIView {
+    private let webView: WKWebView
+    private let errorOverlay = UILabel()
+    weak var errorBinding: Binding<Bool>?
+
+    init(webView: WKWebView, hasError: Binding<Bool>) {
+        self.webView = webView
+        self.errorBinding = hasError
+        super.init(frame: .zero)
+        setupSubviews()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func setupSubviews() {
+        // WKWebView 铺满
+        addSubview(webView)
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: topAnchor),
+            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+
+        // 错误叠加层：默认隐藏
+        errorOverlay.textAlignment = .center
+        errorOverlay.numberOfLines = 0
+        errorOverlay.font = .systemFont(ofSize: 13)
+        errorOverlay.textColor = UIColor(AppTheme.secondaryText)
+        errorOverlay.isHidden = true
+        errorOverlay.alpha = 0
+        addSubview(errorOverlay)
+        errorOverlay.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            errorOverlay.centerXAnchor.constraint(equalTo: centerXAnchor),
+            errorOverlay.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    /// 切换错误叠加层的可见性
+    func syncErrorOverlay(isHidden: Bool) {
+        UIView.animate(withDuration: 0.2) {
+            if isHidden {
+                self.errorOverlay.isHidden = true
+                self.errorOverlay.alpha = 0
+            } else {
+                self.errorOverlay.isHidden = false
+                self.errorOverlay.alpha = 1
+            }
+        }
+    }
+
+    func load(html: String) {
+        webView.loadHTMLString(html, baseURL: nil)
+    }
+}
+
+// MARK: - Binding 桥接：在 Coordinator 回调中同步更新 State
+extension WebViewCoordinator {
+    /// 监听 Coordinator 状态变化并同步到外部 State
+    static func bind(coordinator: WebViewCoordinator, hasError: Binding<Bool>) {
+        let value = coordinator.hasError
+        Task { @MainActor in
+            // 利用 Task 异步调度确保不会在 KVO 中间产生副作用
+            // 实际通过 didSet 来观察变更
+            hasError.wrappedValue = value
+        }
     }
 }
 
