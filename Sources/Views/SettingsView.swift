@@ -113,16 +113,6 @@ struct SettingsView: View {
                                 .font(.system(size: 12))
                         }
                         .foregroundColor(AppTheme.success)
-
-                        HStack(spacing: 6) {
-                            Image(systemName: ICloudSettingsStore.iCloudAvailable ? "icloud.fill" : "icloud.slash")
-                                .font(.system(size: 12))
-                            Text(ICloudSettingsStore.iCloudAvailable
-                                 ? "iCloud 同步已开启：多设备共享设置"
-                                 : "iCloud 同步不可用（需签名描述文件含 iCloud 能力，否则仅本机/钥匙串）")
-                                .font(.system(size: 12))
-                        }
-                        .foregroundColor(ICloudSettingsStore.iCloudAvailable ? AppTheme.success : AppTheme.warning)
                     }
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 8)
