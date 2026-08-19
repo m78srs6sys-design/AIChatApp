@@ -30,6 +30,7 @@ final class ChatViewModel: ObservableObject {
     // MARK: - Clear
     func clearMessages() {
         store.mutateCurrent { $0.messages.removeAll() }
+        store.persist()
         errorMessage = nil
     }
 
@@ -356,13 +357,18 @@ final class ChatViewModel: ObservableObject {
 
         case "location":
             if let loc = await LocationService.shared.awaitLocation() {
+                // 街道级地址（用于非天气场景）
+                let streetAddress = (await skillService.reverseGeocodeStreet(lat: loc.coordinate.latitude,
+                                                                             lon: loc.coordinate.longitude))
+                // 城市级地址（用于天气等城市级场景）
                 let city = (await skillService.reverseGeocode(lat: loc.coordinate.latitude,
                                                               lon: loc.coordinate.longitude)) ?? "未知地点"
                 lastLocation = (lat: loc.coordinate.latitude, lon: loc.coordinate.longitude, city: city)
+                let displayName = streetAddress ?? city
                 let att: [MessageAttachment] = [.location(latitude: loc.coordinate.latitude,
                                                          longitude: loc.coordinate.longitude,
-                                                         name: city)]
-                return (att, "已获取定位：城市「\(city)」，纬度 \(String(format: "%.4f", loc.coordinate.latitude))，经度 \(String(format: "%.4f", loc.coordinate.longitude))")
+                                                         name: displayName)]
+                return (att, "已获取定位：\(displayName)，纬度 \(String(format: "%.4f", loc.coordinate.latitude))，经度 \(String(format: "%.4f", loc.coordinate.longitude))")
             }
             return ([], "无法获取定位（未授权或定位失败）。如需天气 / 周边信息，请直接告诉我城市名。")
 
