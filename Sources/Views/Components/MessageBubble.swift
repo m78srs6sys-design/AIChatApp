@@ -306,7 +306,7 @@ struct AttachmentView: View {
                 Text(p.summary)
                     .font(.system(size: 12))
                     .foregroundColor(AppTheme.secondaryText)
-                    .lineLimit(4)
+                    .lineLimit(10)
                 if let u = URL(string: p.url) {
                     Link(destination: u) {
                         Text("查看原文")
