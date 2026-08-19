@@ -46,10 +46,12 @@ final class OnlineSkillService {
     }
 
     // MARK: - AI 图片生成（Pollinations，免密钥，直出图片 URL）
+    /// 使用 flux 模型 + enhance 自动增强提示词（大幅提升「贴合度」）。
+    /// 建议让模型在 <image> 标签内填写「英文画面描述」以获得最佳效果。
     func generateImage(prompt: String) async throws -> String {
         let p = prompt.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? prompt
         let seed = Int.random(in: 1...1_000_000)
-        let url = "https://image.pollinations.ai/prompt/\(p)?width=1024&height=1024&nologo=true&model=flux&seed=\(seed)"
+        let url = "https://image.pollinations.ai/prompt/\(p)?width=1024&height=1024&nologo=true&model=flux&enhance=true&seed=\(seed)"
         guard URL(string: url) != nil else { throw ChatError.requestFailed }
         return url
     }
@@ -98,6 +100,41 @@ final class OnlineSkillService {
                            humidity: humidity,
                            windSpeed: wind,
                            units: "°C")
+    }
+
+    // MARK: - 天气（按经纬度直查，供「我的位置」场景使用）
+    func weather(lat: Double, lon: Double, cityName: String) async throws -> WeatherInfo {
+        let fcURL = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto"
+        guard let furl = URL(string: fcURL),
+              let (fdata, _) = try? await session.data(from: furl),
+              let fjson = try? JSONSerialization.jsonObject(with: fdata) as? [String: Any],
+              let current = fjson["current"] as? [String: Any] else {
+            throw ChatError.requestFailed
+        }
+        let temp = current["temperature_2m"] as? Double ?? 0
+        let humidity = current["relative_humidity_2m"] as? Int
+        let wind = current["wind_speed_10m"] as? Double
+        let code = current["weather_code"] as? Int ?? 0
+        return WeatherInfo(city: cityName.isEmpty ? "当前位置" : cityName,
+                           temperature: temp,
+                           condition: Self.weatherDescription(code),
+                           humidity: humidity,
+                           windSpeed: wind,
+                           units: "°C")
+    }
+
+    // MARK: - 反向地理编码（BigDataCloud，免密钥，把坐标转为城市名）
+    func reverseGeocode(lat: Double, lon: Double) async -> String? {
+        let urlStr = "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=\(lat)&longitude=\(lon)&localityLanguage=zh"
+        guard let url = URL(string: urlStr),
+              let (data, _) = try? await session.data(from: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let city = json["city"] as? String
+        let locality = json["locality"] as? String
+        let subdivision = json["principalSubdivision"] as? String
+        return (city?.isEmpty == false ? city : (locality?.isEmpty == false ? locality : subdivision))
     }
 
     private static func weatherDescription(_ code: Int) -> String {
@@ -174,6 +211,22 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         } else {
             requestPermission()
         }
+    }
+
+    /// 异步等待一次定位结果（最多约 10 秒）。未授权时先弹权限请求。
+    func awaitLocation() async -> CLLocation? {
+        if authorizationStatus == .notDetermined {
+            requestPermission()
+        } else if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
+            manager.requestLocation()
+        } else {
+            return nil
+        }
+        for _ in 0..<20 {
+            if let loc = currentLocation { return loc }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return currentLocation
     }
 
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
