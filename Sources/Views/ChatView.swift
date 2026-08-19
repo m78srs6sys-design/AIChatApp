@@ -48,8 +48,8 @@ struct ChatView: View {
                 }
                 InputBar(text: $chatVM.inputText, voiceMode: $voiceMode,
                          isGenerating: chatVM.isGenerating,
-                         onVoiceError: { chatVM.errorMessage = $0 },
-                         onSend: { chatVM.send(settings: settingsVM.settings, activeModel: activeModel) })
+                         onSend: { chatVM.send(settings: settingsVM.settings, activeModel: activeModel) },
+                         onVoiceError: { chatVM.errorMessage = $0 })
             }
         }
         .navigationBarHidden(true)
