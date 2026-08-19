@@ -88,14 +88,62 @@ final class OnlineSkillService {
     }
 
     // MARK: - AI 图片生成（Pollinations，免密钥，直出图片 URL）
-    /// 使用 flux 模型 + enhance 自动增强提示词（大幅提升「贴合度」）。
+    /// 使用 flux-pro 模型 + enhance 自动增强提示词（大幅提升「贴合度」）。
     /// 建议让模型在 <image> 标签内填写「英文画面描述」以获得最佳效果。
     func generateImage(prompt: String) async throws -> String {
         let p = prompt.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? prompt
+        // 使用多个种子重试，取最佳效果；使用 flux-pro 模型提升画质
+        for _ in 0..<3 {
+            let seed = Int.random(in: 1...1_000_000)
+            let url = "https://image.pollinations.ai/prompt/\(p)?width=1024&height=1024&nologo=true&model=flux-pro&enhance=true&seed=\(seed)"
+            guard URL(string: url) != nil else { throw ChatError.requestFailed }
+            // 快速验证图片是否可访问（仅检查头信息）
+            if let u = URL(string: url) {
+                var req = URLRequest(url: u)
+                req.httpMethod = "HEAD"
+                req.timeoutInterval = 10
+                if let (_, resp) = try? await session.data(for: req),
+                   let http = resp as? HTTPURLResponse,
+                   http.statusCode == 200 {
+                    return url
+                }
+            }
+        }
+        // 兜底：返回最后一次的 URL
         let seed = Int.random(in: 1...1_000_000)
-        let url = "https://image.pollinations.ai/prompt/\(p)?width=1024&height=1024&nologo=true&model=flux&enhance=true&seed=\(seed)"
-        guard URL(string: url) != nil else { throw ChatError.requestFailed }
-        return url
+        return "https://image.pollinations.ai/prompt/\(p)?width=1024&height=1024&nologo=true&model=flux-pro&enhance=true&seed=\(seed)"
+    }
+
+    // MARK: - 真实图片搜索（Wikipedia 免密钥，搜索实物/地点照片）
+    /// 区别于 AI 图片生成，此接口返回真实世界的照片。
+    /// 通过 Wikipedia 搜索条目并获取其代表性图片。
+    func searchImage(query: String) async throws -> String? {
+        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        // 1. 搜索 Wikipedia 条目
+        let searchUrl = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=\(q)&format=json&srlimit=1"
+        guard let url = URL(string: searchUrl) else { return nil }
+        let (data, _) = try await session.data(from: url)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let queryObj = json["query"] as? [String: Any],
+              let searchArr = queryObj["search"] as? [[String: Any]],
+              let first = searchArr.first,
+              let title = first["title"] as? String else { return nil }
+        // 2. 获取条目的代表性图片
+        let encTitle = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? title
+        let imageUrl = "https://en.wikipedia.org/w/api.php?action=query&titles=\(encTitle)&prop=pageimages&format=json&pithumbsize=500"
+        guard let imgUrl = URL(string: imageUrl),
+              let (imgData, _) = try? await session.data(from: imgUrl),
+              let imgJson = try? JSONSerialization.jsonObject(with: imgData) as? [String: Any],
+              let query = imgJson["query"] as? [String: Any],
+              let pages = query["pages"] as? [String: Any] else { return nil }
+        for (_, pageVal) in pages {
+            if let page = pageVal as? [String: Any],
+               let thumbnail = page["thumbnail"] as? [String: Any],
+               let source = thumbnail["source"] as? String {
+                return source
+            }
+        }
+        return nil
     }
 
     // MARK: - 天气（open-meteo，免密钥）
