@@ -356,7 +356,7 @@ struct WebViewCard: UIViewRepresentable {
     let html: String
     @State private var hasError: Bool = false
 
-    func makeUIView(context: Context) -> ErrorHandlingHostingView {
+    fileprivate func makeUIView(context: Context) -> ErrorHandlingHostingView {
         let config = WKWebViewConfiguration()
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isUserInteractionEnabled = false
@@ -370,12 +370,12 @@ struct WebViewCard: UIViewRepresentable {
         return hostingView
     }
 
-    func updateUIView(_ view: ErrorHandlingHostingView, context: Context) {
+    fileprivate func updateUIView(_ view: ErrorHandlingHostingView, context: Context) {
         context.coordinator.resetErrorIfNeeded()
         view.load(html: wrappedHTML)
     }
 
-    func makeCoordinator() -> WebViewCoordinator {
+    fileprivate func makeCoordinator() -> WebViewCoordinator {
         WebViewCoordinator()
     }
 
@@ -427,11 +427,13 @@ struct WebViewCard: UIViewRepresentable {
 /// 协调器：捕获加载失败事件
 private final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     @MainActor var hasError: Bool = false
-    
+
+    @MainActor
     func resetErrorIfNeeded() {
         hasError = false
     }
-    
+
+    @MainActor
     func markError() {
         hasError = true
     }
@@ -453,7 +455,7 @@ private final class WebViewCoordinator: NSObject, WKNavigationDelegate {
 private final class ErrorHandlingHostingView: UIView {
     private let webView: WKWebView
     private let errorOverlay = UILabel()
-    weak var errorBinding: Binding<Bool>?
+    var errorBinding: Binding<Bool>?
 
     init(webView: WKWebView, hasError: Binding<Bool>) {
         self.webView = webView
@@ -511,13 +513,12 @@ private final class ErrorHandlingHostingView: UIView {
 // MARK: - Binding 桥接：在 Coordinator 回调中同步更新 State
 extension WebViewCoordinator {
     /// 监听 Coordinator 状态变化并同步到外部 State
+    @MainActor
     static func bind(coordinator: WebViewCoordinator, hasError: Binding<Bool>) {
         let value = coordinator.hasError
-        Task { @MainActor in
-            // 利用 Task 异步调度确保不会在 KVO 中间产生副作用
-            // 实际通过 didSet 来观察变更
-            hasError.wrappedValue = value
-        }
+        // 利用 Task 异步调度确保不会在 KVO 中间产生副作用
+        // 实际通过 didSet 来观察变更
+        hasError.wrappedValue = value
     }
 }
 
