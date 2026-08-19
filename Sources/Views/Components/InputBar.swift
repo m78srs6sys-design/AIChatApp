@@ -6,11 +6,19 @@ struct InputBar: View {
     @Binding var voiceMode: Bool
     let isGenerating: Bool
     let onSend: () -> Void
+    /// 语音识别出错时回调（用于弹出错误提示）
+    var onVoiceError: ((String) -> Void)? = nil
 
     @FocusState private var isFocused: Bool
 
+    /// 长按录音的瞬时状态（由手势 .updating 维护，松手后自动复位）
+    private struct HoldState { var active: Bool = false; var cancel: Bool = false }
+    @GestureState private var hold = HoldState()
+
     private let minHeight: CGFloat = 38
     private let maxHeight: CGFloat = 46
+    /// 上滑超过该距离（向上为负）即判定为取消
+    private let cancelThreshold: CGFloat = -60
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 6) {
@@ -82,31 +90,75 @@ struct InputBar: View {
             }
     }
 
-    /// 长按语音输入内容（Apple Speech 公开框架，端侧识别），位于输入框内
+    /// 长按语音输入：长按开始聆听，上滑取消，松开发送为文字
     private var holdToTalkInner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: SpeechRecognizer.shared.isRecording ? "waveform" : "mic.fill")
+        let gesture = LongPressGesture(minimumDuration: 0.25)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .updating($hold) { value, state, _ in
+                switch value {
+                case .first(true):
+                    state = HoldState(active: true, cancel: false)
+                    let ok = SpeechRecognizer.shared.start()
+                    if !ok, let err = SpeechRecognizer.shared.lastError { onVoiceError?(err) }
+                case .second(true, let drag):
+                    let c = (drag?.translation.height ?? 0) < cancelThreshold
+                    state = HoldState(active: true, cancel: c)
+                default:
+                    break
+                }
+            }
+            .onEnded { value in
+                switch value {
+                case .second(true, let drag):
+                    let cancel = (drag?.translation.height ?? 0) < cancelThreshold
+                    if cancel {
+                        // 上滑取消：丢弃识别结果
+                        SpeechRecognizer.shared.cancel()
+                    } else {
+                        // 松开发送：识别文本回填输入框并发送
+                        let t = SpeechRecognizer.shared.stop()
+                        if !t.isEmpty {
+                            let merged = (text + t).trimmingCharacters(in: .whitespacesAndNewlines)
+                            MainActor.assumeIsolated {
+                                text = merged
+                                onSend()
+                            }
+                        } else {
+                            SpeechRecognizer.shared.stop()
+                        }
+                    }
+                default:
+                    SpeechRecognizer.shared.cancel()
+                }
+            }
+
+        let iconName = hold.active ? (hold.cancel ? "xmark.circle.fill" : "waveform") : "mic.fill"
+        let tint = hold.cancel ? AppTheme.error : (hold.active ? AppTheme.error : AppTheme.accent)
+        let label = hold.active ? (hold.cancel ? "松开取消" : "松开发送 · 上滑取消") : "按住 说话"
+
+        return HStack(spacing: 8) {
+            Image(systemName: iconName)
                 .font(.system(size: 14))
-                .foregroundColor(SpeechRecognizer.shared.isRecording ? AppTheme.error : AppTheme.accent)
-            Text(SpeechRecognizer.shared.isRecording ? "正在聆听…松开发送" : "按住 说话")
+                .foregroundColor(tint)
+            Text(label)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(AppTheme.primaryText)
             Spacer()
         }
         .frame(maxWidth: .infinity)
         .frame(height: 36)
-        .onLongPressGesture(minimumDuration: 0.05, maximumDistance: .infinity,
-            pressing: { pressing in
-                if pressing {
-                    SpeechRecognizer.shared.start()
-                } else {
-                    let transcript = SpeechRecognizer.shared.stop()
-                    if !transcript.isEmpty {
-                        let merged = (text + transcript).trimmingCharacters(in: .whitespacesAndNewlines)
-                        text = merged
-                    }
-                }
-            }, perform: {})
+        .background(
+            hold.cancel ? AppTheme.error.opacity(0.16) :
+            (hold.active ? AppTheme.accent.opacity(0.12) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .gesture(gesture)
+        .onReceive(SpeechRecognizer.shared.$lastError) { err in
+            if let err {
+                onVoiceError?(err)
+                SpeechRecognizer.shared.lastError = nil
+            }
+        }
     }
 
     private var sendButton: some View {
