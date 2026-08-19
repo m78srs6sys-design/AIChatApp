@@ -18,11 +18,52 @@ final class OnlineSkillService {
         session = URLSession(configuration: cfg)
     }
 
-    // MARK: - 联网搜索（维基百科，免密钥）
+    // MARK: - 联网搜索（DuckDuckGo 免密钥 API，更可靠）
     func search(query: String) async throws -> [SearchResultItem] {
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let urlStr = "https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=\(q)&format=json&srlimit=5&prop=snippet"
-        guard let url = URL(string: urlStr) else { return [] }
+        // 主搜索：DuckDuckGo Instant Answer API（免密钥，返回摘要 + 相关话题）
+        let ddgUrl = "https://api.duckduckgo.com/?q=\(q)&format=json&no_html=1&skip_disambig=1"
+        if let url = URL(string: ddgUrl),
+           let (data, _) = try? await session.data(from: url),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            var results: [SearchResultItem] = []
+            // 1. 提取摘要（Abstract）
+            if let abstract = json["Abstract"] as? String, !abstract.isEmpty,
+               let source = json["AbstractSource"] as? String,
+               let absUrl = json["AbstractURL"] as? String {
+                results.append(SearchResultItem(
+                    title: "\(source)摘要",
+                    url: absUrl,
+                    snippet: abstract))
+            }
+            // 2. 提取 RelatedTopics
+            if let topics = json["RelatedTopics"] as? [[String: Any]] {
+                for t in topics {
+                    if let text = t["Text"] as? String, !text.isEmpty,
+                       let url = t["FirstURL"] as? String {
+                        results.append(SearchResultItem(title: text.components(separatedBy: " - ").first ?? text,
+                                                        url: url,
+                                                        snippet: text))
+                    }
+                    // 嵌套 Topics（某些分类下还有子话题）
+                    if let subTopics = t["Topics"] as? [[String: Any]] {
+                        for st in subTopics {
+                            if let text = st["Text"] as? String, !text.isEmpty,
+                               let url = st["FirstURL"] as? String {
+                                results.append(SearchResultItem(title: text.components(separatedBy: " - ").first ?? text,
+                                                                url: url,
+                                                                snippet: text))
+                            }
+                        }
+                    }
+                    if results.count >= 5 { break }
+                }
+            }
+            if !results.isEmpty { return results }
+        }
+        // 降级：维基百科搜索（当 DuckDuckGo 无结果时）
+        let wpUrl = "https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=\(q)&format=json&srlimit=4&prop=snippet"
+        guard let url = URL(string: wpUrl) else { return [] }
         let (data, resp) = try await session.data(from: url)
         guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
