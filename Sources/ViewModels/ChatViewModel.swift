@@ -49,6 +49,9 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// 当前正在执行的生成任务（用于强制终止）
+    private var generationTask: Task<Void, Never>?
+
     // MARK: - Send
     func send(settings: APISettings, activeModel: LocalModel?) {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -68,10 +71,20 @@ final class ChatViewModel: ObservableObject {
 
         switch store.currentMode {
         case .online:
-            Task { await runOnline(userText: text, settings: settings) }
+            generationTask = Task { await runOnline(userText: text, settings: settings) }
         case .offline:
-            Task { await runOffline(activeModel: activeModel) }
+            generationTask = Task { await runOffline(activeModel: activeModel) }
         }
+    }
+
+    /// 强制终止所有网络请求和 AI 生成
+    func stopGeneration() {
+        generationTask?.cancel()
+        generationTask = nil
+        isGenerating = false
+        statusMessage = nil
+        errorMessage = nil
+        store.persist()
     }
 
     // MARK: - Online Flow（内置联网技能，Agent 式多步工具调用）
@@ -193,6 +206,7 @@ final class ChatViewModel: ObservableObject {
                 await synthesizeAndPlay(text: finalText)
             }
         } catch {
+            guard !Task.isCancelled else { return } // 用户主动终止，不报错
             errorMessage = error.localizedDescription
             failAssistant(aiId, fallback: "（请求失败，请重试）")
         }
@@ -248,6 +262,7 @@ final class ChatViewModel: ObservableObject {
             }
             finishAssistant(aiId)
         } catch {
+            guard !Task.isCancelled else { return } // 用户主动终止，不报错
             errorMessage = error.localizedDescription
             failAssistant(aiId, fallback: "（推理失败：\(error.localizedDescription)）")
         }
