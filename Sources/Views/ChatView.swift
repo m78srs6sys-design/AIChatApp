@@ -43,8 +43,6 @@ struct ChatView: View {
                 if store.currentMode == .online {
                     deepThinkingBar
                 }
-                // 语音输入切换（输入框上方）
-                voiceToggleRow
                 if selectionMode {
                     selectionBar
                 }
@@ -272,37 +270,8 @@ struct ChatView: View {
             Spacer()
         }
         .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 2)
-    }
-
-    // MARK: - 语音输入切换（输入框上方）
-    private var voiceToggleRow: some View {
-        HStack {
-            Spacer()
-            Button {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                    voiceMode.toggle()
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: voiceMode ? "mic.fill" : "mic")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(voiceMode ? "语音输入已开启（长按说话）" : "语音输入")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundColor(voiceMode ? AppTheme.accent : AppTheme.secondaryText)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(voiceMode ? AppTheme.accent.opacity(0.16) : AppTheme.surface)
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
-            }
-            .buttonStyle(BounceButtonStyle())
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 4)
-        .padding(.bottom, 2)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
     }
 
     // MARK: - 多选删除工具条
