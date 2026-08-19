@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WebKit
 
 /// 单条消息气泡：用户(右·亮色) / AI(左·深色磨砂)
 struct MessageBubble: View {
@@ -317,9 +318,103 @@ struct AttachmentView: View {
             .padding(14)
             .background(AppTheme.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
+
+        case .htmlCard(let html):
+            WebViewCard(html: html)
+                .frame(minHeight: 120, maxHeight: 360)
+                .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous)
+                        .stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5)
+                )
+
+        case .systemAction(let action, let description):
+            HStack(spacing: 10) {
+                Image(systemName: "gearshape.2.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(AppTheme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("系统操作")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(AppTheme.secondaryText)
+                    Text(description)
+                        .font(.system(size: 13))
+                        .foregroundColor(AppTheme.primaryText)
+                }
+                Spacer()
+            }
+            .padding(14)
+            .background(AppTheme.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
         }
     }
 }
+
+/// HTML 可视化卡片（圆角，WKWebView 渲染）
+struct WebViewCard: UIViewRepresentable {
+    let html: String
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        // 禁止用户交互（滚动/点击等），纯展示
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.isUserInteractionEnabled = false
+        webView.scrollView.isScrollEnabled = false
+        webView.backgroundColor = UIColor.clear
+        webView.isOpaque = false
+        webView.loadHTMLString(wrappedHTML, baseURL: nil)
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        webView.loadHTMLString(wrappedHTML, baseURL: nil)
+    }
+
+    /// 包裹 HTML，添加深色主题适配
+    private var wrappedHTML: String {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                font-size: 14px;
+                color: #e8e6f0;
+                background: transparent;
+                padding: 14px;
+                line-height: 1.5;
+            }
+            /* 圆角卡片容器 */
+            .card {
+                background: rgba(30, 28, 46, 0.85);
+                border-radius: 16px;
+                padding: 16px;
+                overflow: hidden;
+            }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.08); }
+            th { font-weight: 600; color: #FFA06B; }
+            td { color: #e8e6f0; }
+            h1, h2, h3, h4 { color: #FFA06B; margin: 8px 0; }
+            p { margin: 6px 0; color: #c8c6d0; }
+            .badge {
+                display: inline-block;
+                background: rgba(255, 160, 107, 0.15);
+                color: #FFA06B;
+                padding: 2px 10px;
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: 500;
+            }
+        </style>
+        </head>
+        <body><div class="card">\(html)</div></body>
+        </html>
+        """
+    }
 
 /// AI 思考中的脉冲点
 struct DotPulse: View {
