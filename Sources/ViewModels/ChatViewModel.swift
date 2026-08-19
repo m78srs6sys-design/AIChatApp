@@ -224,16 +224,32 @@ final class ChatViewModel: ObservableObject {
         let aiId = appendAssistant()
         statusMessage = "正在生成回复…"
 
+        if #available(iOS 16.1, *) {
+            DownloadActivityManager.shared.startInference(modelName: model.name)
+        }
+
         do {
             let history = store.current?.messages.filter { $0.id != aiId } ?? []
+            var tokenCount = 0
             try await localEngine.streamInfer(messages: history) { [weak self] token in
                 guard let self else { return }
                 self.appendToken(to: aiId, token: token)
+                tokenCount += 1
+                if tokenCount % 4 == 0 {
+                    let p = min(0.95, Double(tokenCount) / 600.0)
+                    if #available(iOS 16.1, *) {
+                        DownloadActivityManager.shared.updateInference(tokens: tokenCount, progress: p)
+                    }
+                }
             }
             finishAssistant(aiId)
         } catch {
             errorMessage = error.localizedDescription
             failAssistant(aiId, fallback: "（推理失败：\(error.localizedDescription)）")
+        }
+
+        if #available(iOS 16.1, *) {
+            DownloadActivityManager.shared.endInference()
         }
     }
 
