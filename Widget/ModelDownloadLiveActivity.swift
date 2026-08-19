@@ -6,16 +6,10 @@ import ActivityKit
 @available(iOS 16.1, *)
 struct ModelDownloadLiveActivity: Widget {
     var body: some WidgetConfiguration {
-        if #available(iOS 16.2, *) {
-            return ActivityConfiguration(for: ModelDownloadAttributes.self) { context in
-                downloadLockScreen(context)
-            } dynamicIsland: { context in
-                downloadDynamicIsland(context)
-            }
-        } else {
-            return ActivityConfiguration(for: ModelDownloadAttributes.self) { context in
-                downloadLockScreen(context)
-            }
+        ActivityConfiguration(for: ModelDownloadAttributes.self) { context in
+            downloadLockScreen(context)
+        } dynamicIsland: { context in
+            downloadDynamicIsland(context)
         }
     }
 
@@ -49,7 +43,6 @@ struct ModelDownloadLiveActivity: Widget {
         .activitySystemActionForegroundColor(.white)
     }
 
-    @DynamicIslandBuilder
     private func downloadDynamicIsland(_ context: ActivityViewContext<ModelDownloadAttributes>) -> DynamicIsland {
         DynamicIsland {
             DynamicIslandExpandedRegion(.leading) {
@@ -84,16 +77,10 @@ struct ModelDownloadLiveActivity: Widget {
 @available(iOS 16.1, *)
 struct ModelInferenceLiveActivity: Widget {
     var body: some WidgetConfiguration {
-        if #available(iOS 16.2, *) {
-            return ActivityConfiguration(for: ModelInferenceAttributes.self) { context in
-                inferenceLockScreen(context)
-            } dynamicIsland: { context in
-                inferenceDynamicIsland(context)
-            }
-        } else {
-            return ActivityConfiguration(for: ModelInferenceAttributes.self) { context in
-                inferenceLockScreen(context)
-            }
+        ActivityConfiguration(for: ModelInferenceAttributes.self) { context in
+            inferenceLockScreen(context)
+        } dynamicIsland: { context in
+            inferenceDynamicIsland(context)
         }
     }
 
@@ -129,7 +116,6 @@ struct ModelInferenceLiveActivity: Widget {
         .activitySystemActionForegroundColor(.white)
     }
 
-    @DynamicIslandBuilder
     private func inferenceDynamicIsland(_ context: ActivityViewContext<ModelInferenceAttributes>) -> DynamicIsland {
         DynamicIsland {
             DynamicIslandExpandedRegion(.leading) {
