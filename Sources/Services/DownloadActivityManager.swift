@@ -1,13 +1,16 @@
 import Foundation
 import ActivityKit
 
-/// 管理模型下载的 Live Activity（锁屏 / 灵动岛实时进度）
+/// 管理模型下载与离线推理的 Live Activity（锁屏 / 灵动岛实时进度）
 @available(iOS 16.1, *)
 final class DownloadActivityManager {
     static let shared = DownloadActivityManager()
     private var activities: [String: Activity<ModelDownloadAttributes>] = [:]
+    private var inferenceActivities: [String: Activity<ModelInferenceAttributes>] = [:]
 
     private init() {}
+
+    // MARK: - 模型下载
 
     func start(modelName: String, modelId: String) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
@@ -43,20 +46,20 @@ final class DownloadActivityManager {
         }
     }
 
-    // MARK: - 离线模型「生成回复」进度（复用同一管理器的活动表）
+    // MARK: - 离线模型「生成回复」进度
 
     private let inferenceId = "offline-inference"
 
     /// 开始一个离线推理 Live Activity（锁屏 / 灵动岛显示「正在生成回复…」）
     func startInference(modelName: String) {
-        guard #available(iOS 16.1, *), ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        guard activities[inferenceId] == nil else { return }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        guard inferenceActivities[inferenceId] == nil else { return }
         let attributes = ModelInferenceAttributes(modelName: modelName)
         let state = ModelInferenceAttributes.ContentState(statusText: "正在生成回复…", progress: 0.02, tokens: 0)
         do {
-            activities[inferenceId] = try Activity.request(attributes: attributes,
-                                                           contentState: state,
-                                                           pushType: nil)
+            inferenceActivities[inferenceId] = try Activity.request(attributes: attributes,
+                                                                     contentState: state,
+                                                                     pushType: nil)
         } catch {
             // Live Activity 可能被用户禁用，忽略即可，不影响生成
         }
@@ -64,7 +67,7 @@ final class DownloadActivityManager {
 
     /// 更新推理进度（每生成若干 token 调用一次）
     func updateInference(tokens: Int, progress: Double) {
-        guard #available(iOS 16.1, *), let activity = activities[inferenceId] else { return }
+        guard let activity = inferenceActivities[inferenceId] else { return }
         let state = ModelInferenceAttributes.ContentState(statusText: "正在生成回复…",
                                                          progress: progress,
                                                          tokens: tokens)
@@ -75,11 +78,11 @@ final class DownloadActivityManager {
 
     /// 结束推理 Live Activity（显示「回复完成」后自动消失）
     func endInference() {
-        guard #available(iOS 16.1, *), let activity = activities[inferenceId] else { return }
-        activities[inferenceId] = nil
+        guard let activity = inferenceActivities[inferenceId] else { return }
+        inferenceActivities[inferenceId] = nil
         let final = ModelInferenceAttributes.ContentState(statusText: "回复完成", progress: 1.0, tokens: 0)
         Task {
-            await activity.end(using: final, dismissalPolicy: .after(date: Date().addingTimeInterval(2)))
+            await activity.end(using: final, dismissalPolicy: .immediate)
         }
     }
 }
