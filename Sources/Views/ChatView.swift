@@ -226,11 +226,15 @@ struct ChatView: View {
         .background(AppTheme.surface.opacity(0.6))
     }
 
-    // MARK: - Deep Thinking + 联网功能开关
+    // MARK: - Deep Thinking + 联网附加开关
     private var deepThinkingBar: some View {
         HStack(spacing: 8) {
             Button {
                 settingsVM.settings.deepThinking.toggle()
+                // 深度思考关闭时，强制关闭联网附加
+                if !settingsVM.settings.deepThinking {
+                    settingsVM.settings.onlineFeaturesEnabled = false
+                }
                 settingsVM.save()
             } label: {
                 HStack(spacing: 6) {
@@ -248,14 +252,16 @@ struct ChatView: View {
             }
             .buttonStyle(BounceButtonStyle())
 
+            // 联网附加：仅当深度思考开启时才可操作
             Button {
+                guard settingsVM.settings.deepThinking else { return }
                 settingsVM.settings.onlineFeaturesEnabled.toggle()
                 settingsVM.save()
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: settingsVM.settings.onlineFeaturesEnabled ? "network" : "network.slash")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("联网功能")
+                    Text("联网附加")
                         .font(.system(size: 12, weight: .medium))
                 }
                 .foregroundColor(settingsVM.settings.onlineFeaturesEnabled ? AppTheme.accent : AppTheme.secondaryText)
@@ -264,8 +270,10 @@ struct ChatView: View {
                 .background(settingsVM.settings.onlineFeaturesEnabled ? AppTheme.accent.opacity(0.16) : AppTheme.surface)
                 .clipShape(Capsule())
                 .overlay(Capsule().stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
+                .opacity(settingsVM.settings.deepThinking ? 1.0 : 0.5)
             }
             .buttonStyle(BounceButtonStyle())
+            .disabled(!settingsVM.settings.deepThinking)
 
             Spacer()
         }
