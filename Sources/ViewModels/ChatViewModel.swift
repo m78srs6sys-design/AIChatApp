@@ -100,7 +100,8 @@ final class ChatViewModel: ObservableObject {
                - <search>查询词</search> 联网搜索
                - <weather>城市名 或 "我的位置"</weather> 查询天气
                - <web>网页URL</web> 网页摘要
-               - <image>英文画面描述</image> 生成图片
+               - <image>英文画面描述</image> 生成 AI 创意图片（当用户想生成画作、插画、海报等创意内容时使用）
+               - <imageSearch>查询词</imageSearch> 搜索真实照片（当用户问某物/某地长什么样、想看真实图片时使用，区别于 AI 生成图片）
                - <card>HTML 代码</card> 生成可视化卡片（仅当用户主动要求可视化，或纯文字无法表达清楚时使用；卡片内容需是完整 HTML）
                - <system>命令</system> 执行系统操作（如 brightness 0.5 调节亮度、低电量 打开电池设置、wifi、蓝牙、显示、声音）
             3) 可以连续调用多个工具来逐步完成任务，例如：先 <location/> 得到所在城市，再 <search>该城市 附近景点</search>，再 <weather>我的位置</weather>。
@@ -357,6 +358,12 @@ final class ChatViewModel: ObservableObject {
             }
             return ([], "图片生成失败。")
 
+        case "imagesearch":
+            if let url = try? await skillService.searchImage(query: content) {
+                return ([.image(url: url)], "已找到「\(content)」的真实图片")
+            }
+            return ([], "未找到「\(content)」的真实图片。")
+
         case "location":
             if let loc = await LocationService.shared.awaitLocation() {
                 // 街道级地址（用于非天气场景）
@@ -395,6 +402,7 @@ final class ChatViewModel: ObservableObject {
         case "weather": return "天气"
         case "web": return "网页摘要"
         case "image": return "图片生成"
+        case "imagesearch": return "真实图片"
         case "location": return "定位"
         case "card": return "可视化卡片"
         case "system": return "系统操作"
@@ -462,9 +470,9 @@ final class ChatViewModel: ObservableObject {
 
     static func extractCalls(_ text: String) -> [(kind: String, content: String)] {
         var results: [(String, String)] = []
-        // 带内容的工具标签
+        // 带内容的工具标签（注意 imageSearch 优先匹配，放在 image 前面）
         guard let regex = try? NSRegularExpression(
-            pattern: #"<(search|image|weather|web|card|system)>(.*?)</\1>"#,
+            pattern: #"<(imageSearch|search|image|weather|web|card|system)>(.*?)</\1>"#,
             options: [.dotMatchesLineSeparators, .caseInsensitive]) else { return results }
         let ns = text as NSString
         let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
@@ -483,12 +491,12 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// 移除模型回复中的调用标签（仅展示干净文本）
-    /// 覆盖所有工具标签：<search>、<image>、<weather>、<web>、<card>、<system>、<location/>
+    /// 覆盖所有工具标签：<imageSearch>、<search>、<image>、<weather>、<web>、<card>、<system>、<location/>
     static func stripCallTags(_ text: String) -> String {
         var result = text
         // 移除带内容标签：<xxx>...</xxx>
         if let regex = try? NSRegularExpression(
-            pattern: #"<(search|image|weather|web|card|system)>(.*?)</\1>"#,
+            pattern: #"<(imageSearch|search|image|weather|web|card|system)>(.*?)</\1>"#,
             options: [.dotMatchesLineSeparators, .caseInsensitive]) {
             result = regex.stringByReplacingMatches(
                 in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
