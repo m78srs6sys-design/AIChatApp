@@ -138,7 +138,7 @@ final class ConversationStore: ObservableObject {
         var result = text
         // 移除带内容标签：<xxx>...</xxx>
         if let regex = try? NSRegularExpression(
-            pattern: #"<(search|image|weather|web|card|system)>(.*?)</\1>"#,
+            pattern: #"<(imageSearch|search|image|weather|web|card|system)>(.*?)</\1>"#,
             options: [.dotMatchesLineSeparators, .caseInsensitive]) {
             result = regex.stringByReplacingMatches(
                 in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
