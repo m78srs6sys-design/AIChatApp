@@ -177,6 +177,7 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
     case weather
     case web
     case image
+    case system
 
     var id: String { rawValue }
 
@@ -187,6 +188,7 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
         case .weather:  return "天气"
         case .web:      return "网页"
         case .image:    return "图片"
+        case .system:   return "系统"
         }
     }
 
@@ -206,6 +208,7 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
         case .weather:  return "<weather>\(param)</weather>"
         case .web:      return "<web>\(param)</web>"
         case .image:    return "<image>\(param)</image>"
+        case .system:   return "<system>\(param)</system>"
         }
     }
 }
@@ -275,6 +278,11 @@ struct WorkflowPreset: Codable, Identifiable, Hashable {
                 name: "画一张图",
                 trigger: "想生成 / 画一张图片、插画、海报",
                 steps: [ToolStep(tool: .image, param: "画面描述（建议英文）")]
+            ),
+            WorkflowPreset(
+                name: "系统优化",
+                trigger: "想调节设备、省电、优化体验",
+                steps: [ToolStep(tool: .system, param: "brightness 0.7")]
             )
         ]
     }
