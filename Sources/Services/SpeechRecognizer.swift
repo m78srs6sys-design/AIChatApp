@@ -70,6 +70,11 @@ final class SpeechRecognizer: ObservableObject {
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
+        request.taskHint = .dictation  // 设为 Dictation 模式，提升通用听写准确率
+        // 允许使用在线识别（比纯离线更准确，需要网络）
+        if #available(iOS 17.0, *) {
+            request.requiresOnDeviceRecognition = false
+        }
         self.request = request
 
         let node = audioEngine.inputNode
