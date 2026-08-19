@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import UIKit
 
 /// 联网技能服务集合：搜索、图片生成、天气、网页抓取、语音合成。
 /// 全部使用「免密钥」公开接口实现，无需配置任何后端服务：
@@ -250,6 +251,79 @@ final class OnlineSkillService {
     // MARK: - 语音合成（未接入后端时降级，不影响文本）
     func synthesizeSpeech(text: String) async throws -> String {
         throw ChatError.requestFailed
+    }
+
+    // MARK: - 系统 API 操作（亮度调节、设置跳转等）
+    /// 执行系统级操作。返回 (操作描述, 是否成功)
+    func executeSystemAction(command: String) -> (description: String, success: Bool) {
+        let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        if cmd == "low_power" || cmd == "低电量" || cmd == "省电" {
+            // 打开设置 → 电池页面（iOS 无法直接编程开启低电量模式）
+            let urlStr = UIApplication.openSettingsURLString + "BATTERY_USAGE"
+            if let url = URL(string: urlStr), UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+                return ("已打开「设置 → 电池」，请手动开启低电量模式", true)
+            }
+            // 降级：打开设置首页
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+                return ("已打开系统设置，请手动前往「电池」开启低电量模式", true)
+            }
+            return ("无法打开设置", false)
+        }
+
+        if cmd.hasPrefix("brightness") || cmd.hasPrefix("亮度") {
+            // 解析亮度值：brightness 0.5 或 亮度 50%
+            let parts = command.components(separatedBy: .whitespaces)
+            if parts.count >= 2, let val = Double(parts.last!.trimmingCharacters(in: CharacterSet(charactersIn: "%"))) {
+                let level = val > 1 ? val / 100.0 : val
+                let clamped = min(1.0, max(0.0, level))
+                UIScreen.main.brightness = CGFloat(clamped)
+                return ("已将屏幕亮度调整为 \(Int(clamped * 100))%", true)
+            }
+            // 默认调节到 50%
+            UIScreen.main.brightness = 0.5
+            return ("已将屏幕亮度调整为 50%", true)
+        }
+
+        if cmd == "wifi" || cmd == "无线" || cmd == "无线网络" {
+            if let url = URL(string: "App-Prefs:root=WIFI"),
+               UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+                return ("已打开「设置 → Wi-Fi」", true)
+            }
+            return ("无法打开 Wi-Fi 设置", false)
+        }
+
+        if cmd == "bluetooth" || cmd == "蓝牙" {
+            if let url = URL(string: "App-Prefs:root=Bluetooth"),
+               UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+                return ("已打开「设置 → 蓝牙」", true)
+            }
+            return ("无法打开蓝牙设置", false)
+        }
+
+        if cmd == "display" || cmd == "显示" || cmd == "屏幕" || cmd == "显示与亮度" {
+            if let url = URL(string: "App-Prefs:root=DISPLAY"),
+               UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+                return ("已打开「设置 → 显示与亮度」", true)
+            }
+            return ("无法打开显示设置", false)
+        }
+
+        if cmd == "sound" || cmd == "声音" || cmd == "音量" {
+            if let url = URL(string: "App-Prefs:root=Sounds"),
+               UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+                return ("已打开「设置 → 声音与触感」", true)
+            }
+            return ("无法打开声音设置", false)
+        }
+
+        return ("未知系统操作「\(command)」，支持的命令：brightness <0-1>、低电量、wifi、蓝牙、显示、声音", false)
     }
 }
 
