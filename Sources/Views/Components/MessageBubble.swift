@@ -425,7 +425,7 @@ struct WebViewCard: UIViewRepresentable {
 }
 
 /// 协调器：捕获加载失败事件
-private final class WebViewCoordinator: NSObject, WKNavigationDelegate {
+fileprivate final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     @MainActor var hasError: Bool = false
 
     @MainActor
@@ -454,7 +454,7 @@ private final class WebViewCoordinator: NSObject, WKNavigationDelegate {
 }
 
 /// 自定义宿主视图：包含 WKWebView + 错误降级叠加层
-private final class ErrorHandlingHostingView: UIView {
+fileprivate final class ErrorHandlingHostingView: UIView {
     private let webView: WKWebView
     private let errorOverlay = UILabel()
     var errorBinding: Binding<Bool>?
