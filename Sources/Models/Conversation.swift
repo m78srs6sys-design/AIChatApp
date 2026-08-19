@@ -136,12 +136,14 @@ final class ConversationStore: ObservableObject {
     /// 移除所有工具标签（用于清理历史消息中的残留标签）
     static func stripAllTags(_ text: String) -> String {
         var result = text
+        // 移除带内容标签：<xxx>...</xxx>
         if let regex = try? NSRegularExpression(
-            pattern: #"<(search|image|weather|web)>(.*?)</\1>"#,
+            pattern: #"<(search|image|weather|web|card|system)>(.*?)</\1>"#,
             options: [.dotMatchesLineSeparators, .caseInsensitive]) {
             result = regex.stringByReplacingMatches(
                 in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
         }
+        // 移除自闭合标签：<location/>、<location></location>
         if let locRegex = try? NSRegularExpression(
             pattern: #"<location\s*/?>(\s*</location>)?"#,
             options: [.caseInsensitive]) {
