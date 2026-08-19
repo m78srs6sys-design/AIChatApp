@@ -77,8 +77,8 @@ struct SettingsView: View {
                     section(title: "其他设置") {
                         VStack(spacing: 14) {
                             toggleRow(
-                                title: "允许 AI 调用联网功能",
-                                subtitle: "开启后，AI 可在需要时主动搜索、查天气、读网页、生成图片",
+                                title: "允许 AI 调用联网附加功能",
+                                subtitle: "开启后，AI 可在需要时主动搜索、查天气、读网页、生成图片、操作设备",
                                 isOn: onlineFeaturesBinding
                             )
                             Divider().background(AppTheme.divider)
@@ -401,6 +401,9 @@ struct WorkflowStepCard: View {
     let onMoveDown: () -> Void
     let onDelete: () -> Void
 
+    @State private var showSystemDialog = false
+    @State private var systemCommandDraft = ""
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             headerRow
@@ -410,6 +413,9 @@ struct WorkflowStepCard: View {
         .padding(12)
         .background(AppTheme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .sheet(isPresented: $showSystemDialog) {
+            systemCommandEditor
+        }
     }
 
     private var headerRow: some View {
@@ -442,7 +448,31 @@ struct WorkflowStepCard: View {
 
     @ViewBuilder
     private var paramRow: some View {
-        if step.tool.needsParam {
+        if step.tool == .system {
+            // 系统操作：点击弹出对话框填写命令
+            Button {
+                systemCommandDraft = step.param
+                showSystemDialog = true
+            } label: {
+                HStack {
+                    Image(systemName: "gearshape.2.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(AppTheme.accent)
+                    Text(step.param.isEmpty ? "点击编辑系统操作命令" : step.param)
+                        .font(.system(size: 13))
+                        .foregroundColor(step.param.isEmpty ? AppTheme.tertiaryText : AppTheme.primaryText)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10))
+                        .foregroundColor(AppTheme.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(AppTheme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        } else if step.tool.needsParam {
             TextField("参数（如：附近 景点 推荐 / 我的位置）", text: $step.param)
                 .font(.system(size: 14))
                 .foregroundColor(AppTheme.primaryText)
@@ -454,6 +484,55 @@ struct WorkflowStepCard: View {
             Text("该工具无需参数")
                 .font(.system(size: 12))
                 .foregroundColor(AppTheme.tertiaryText)
+        }
+    }
+
+    /// 系统操作命令编辑器（对话框）
+    private var systemCommandEditor: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("系统操作命令")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppTheme.secondaryText)
+                    Text("描述想让 AI 执行什么系统操作，例如：\nbrightness 0.5 — 调节亮度至 50%\n低电量 — 打开电池设置\nwifi — 打开 Wi-Fi 设置")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                TextEditor(text: $systemCommandDraft)
+                    .font(.system(size: 14))
+                    .foregroundColor(AppTheme.primaryText)
+                    .scrollContentBackground(.hidden)
+                    .padding(12)
+                    .background(AppTheme.surfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5)
+                    )
+                    .frame(minHeight: 100)
+
+                Spacer()
+            }
+            .padding(16)
+            .background(AppTheme.background.ignoresSafeArea())
+            .navigationTitle("系统操作")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { showSystemDialog = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("确定") {
+                        step.param = systemCommandDraft
+                        showSystemDialog = false
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
         }
     }
 }
