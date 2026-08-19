@@ -79,30 +79,14 @@ final class OnlineSkillService {
     }
 
     // MARK: - AI 图片生成（Pollinations，免密钥，直出图片 URL）
-    /// 使用 flux-pro 模型 + enhance 自动增强提示词（大幅提升「贴合度」）。
+    /// 使用 flux 模型 + enhance 自动增强提示词。
     /// 建议让模型在 <image> 标签内填写「英文画面描述」以获得最佳效果。
     func generateImage(prompt: String) async throws -> String {
         let p = prompt.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? prompt
-        // 使用多个种子重试，取最佳效果；使用 flux-pro 模型提升画质
-        for _ in 0..<3 {
-            let seed = Int.random(in: 1...1_000_000)
-            let url = "https://image.pollinations.ai/prompt/\(p)?width=1024&height=1024&nologo=true&model=flux-pro&enhance=true&seed=\(seed)"
-            guard URL(string: url) != nil else { throw ChatError.requestFailed }
-            // 快速验证图片是否可访问（仅检查头信息）
-            if let u = URL(string: url) {
-                var req = URLRequest(url: u)
-                req.httpMethod = "HEAD"
-                req.timeoutInterval = 10
-                if let (_, resp) = try? await session.data(for: req),
-                   let http = resp as? HTTPURLResponse,
-                   http.statusCode == 200 {
-                    return url
-                }
-            }
-        }
-        // 兜底：返回最后一次的 URL
         let seed = Int.random(in: 1...1_000_000)
-        return "https://image.pollinations.ai/prompt/\(p)?width=1024&height=1024&nologo=true&model=flux-pro&enhance=true&seed=\(seed)"
+        let url = "https://image.pollinations.ai/prompt/\(p)?width=1024&height=1024&nologo=true&model=flux&enhance=true&seed=\(seed)"
+        guard URL(string: url) != nil else { throw ChatError.requestFailed }
+        return url
     }
 
     // MARK: - 真实图片搜索（Wikipedia 免密钥，搜索实物/地点照片）
@@ -263,8 +247,20 @@ final class OnlineSkillService {
     // MARK: - 网页抓取与摘要（直连，免密钥）
     func fetchWebpage(url: String) async throws -> WebpageSummary {
         guard let u = URL(string: url),
-              let (data, _) = try? await session.data(from: u),
-              let raw = String(data: data, encoding: .utf8) else {
+              let (data, _) = try? await session.data(from: u) else {
+            throw ChatError.requestFailed
+        }
+
+        // 尝试多种编码（中文网站常用 GBK/GB2312）
+        let raw: String
+        if let s = String(data: data, encoding: .utf8) {
+            raw = s
+        } else if let s = String(data: data, encoding: .isoLatin1) {
+            // 用 Latin1 兜底，然后尝试检测 meta charset
+            raw = s
+        } else if let s = String(data: data, encoding: .windowsCP1252) {
+            raw = s
+        } else {
             throw ChatError.requestFailed
         }
 
@@ -284,7 +280,7 @@ final class OnlineSkillService {
         text = text.replacingOccurrences(of: "<[^>]+>", with: " ", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: "&[a-z]+;", with: " ", options: .regularExpression)
         text = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
-        return WebpageSummary(url: url, title: title, summary: String(text.prefix(4000)))
+        return WebpageSummary(url: url, title: title, summary: String(text.prefix(8000)))
     }
 
     // MARK: - 语音合成（未接入后端时降级，不影响文本）
