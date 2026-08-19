@@ -102,9 +102,9 @@ final class ChatViewModel: ObservableObject {
             return
         }
 
-        // 系统提示：所有附加功能仅当深度思考+联网附加均开启时可用
+        // 系统提示：所有附加功能仅当联网附加开启时可用
         var systemPrompt: String? = nil
-        if settings.onlineFeaturesEnabled && settings.deepThinking {
+        if settings.onlineFeaturesEnabled {
             var sp = """
             你是一个会主动使用工具的智能助手。工作流程：
             1) 先在脑中深度思考用户真正需要什么信息。
@@ -497,31 +497,100 @@ final class ChatViewModel: ObservableObject {
 
     static func extractCalls(_ text: String) -> [(kind: String, content: String)] {
         var results: [(String, String)] = []
-        // 带内容的工具标签（注意 imageSearch 优先匹配，放在 image 前面）
-        guard let regex = try? NSRegularExpression(
-            pattern: #"<(imageSearch|search|image|weather|web|card|system)>(.*?)</\1>"#,
-            options: [.dotMatchesLineSeparators, .caseInsensitive]) else { return results }
-        let ns = text as NSString
-        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
-        for m in matches {
-            let kind = ns.substring(with: m.range(at: 1)).lowercased()
-            let content = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !content.isEmpty { results.append((kind, content)) }
+        
+        // 1. 尝试解析 JSON 格式的工具调用（优先）
+        // 找到所有可能的 JSON 对象（从 { 开始，到匹配的 } 结束）
+        var depth = 0
+        var startIdx: String.Index?
+        for (idx, char) in text.enumerated() {
+            let index = text.index(text.startIndex, offsetBy: idx)
+            if char == "{" {
+                if depth == 0 { startIdx = index }
+                depth += 1
+            } else if char == "}" {
+                depth -= 1
+                if depth == 0, let start = startIdx {
+                    let jsonStr = String(text[start...index])
+                    // 尝试解析 JSON
+                    if let jsonData = jsonStr.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                       let name = json["name"] as? String {
+                        let kind = name.lowercased()
+                        var content = ""
+                        // 提取 arguments 中的 query 或 prompt
+                        if let args = json["arguments"] as? [String: Any] {
+                            if let q = args["query"] as? String {
+                                content = q
+                            } else if let p = args["prompt"] as? String {
+                                content = p
+                            }
+                        }
+                        results.append((kind, content))
+                    }
+                    startIdx = nil
+                }
+            }
         }
-        // <location/> 或 <location></location>：定位工具，无参数
-        if let locRegex = try? NSRegularExpression(pattern: #"<location\s*/?>"#,
-                                                   options: [.caseInsensitive]),
-           locRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil {
-            results.append(("location", ""))
+        
+        // 2. 如果没有找到 JSON 格式，尝试解析 XML 标签格式
+        if results.isEmpty {
+            // 带内容的工具标签（注意 imageSearch 优先匹配，放在 image 前面）
+            guard let regex = try? NSRegularExpression(
+                pattern: #"<(imageSearch|search|image|weather|web|card|system)>(.*?)</\1>"#,
+                options: [.dotMatchesLineSeparators, .caseInsensitive]) else { return results }
+            let ns = text as NSString
+            let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+            for m in matches {
+                let kind = ns.substring(with: m.range(at: 1)).lowercased()
+                let content = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !content.isEmpty { results.append((kind, content)) }
+            }
+            // <location/> 或 <location></location>：定位工具，无参数
+            if let locRegex = try? NSRegularExpression(pattern: #"<location\s*/?>"#,
+                                                       options: [.caseInsensitive]),
+               locRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil {
+                results.append(("location", ""))
+            }
         }
+        
         return results
     }
 
     /// 移除模型回复中的调用标签（仅展示干净文本）
     /// 覆盖所有工具标签：<imageSearch>、<search>、<image>、<weather>、<web>、<card>、<system>、<location/>
+    /// 同时支持 JSON 格式：{"name": "xxx"} 或 {"name": "xxx", "arguments": {...}}
     static func stripCallTags(_ text: String) -> String {
         var result = text
-        // 移除带内容标签：<xxx>...</xxx>
+        
+        // 1. 移除 JSON 格式的工具调用（使用与 extractCalls 相同的逻辑）
+        var depth = 0
+        var startIdx: String.Index?
+        var rangesToRemove: [Range<String.Index>] = []
+        for (idx, char) in text.enumerated() {
+            let index = text.index(text.startIndex, offsetBy: idx)
+            if char == "{" {
+                if depth == 0 { startIdx = index }
+                depth += 1
+            } else if char == "}" {
+                depth -= 1
+                if depth == 0, let start = startIdx {
+                    let jsonStr = String(text[start...index])
+                    // 检查是否是工具调用 JSON
+                    if let jsonData = jsonStr.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                       json["name"] != nil {
+                        rangesToRemove.append(start..<text.index(after: index))
+                    }
+                    startIdx = nil
+                }
+            }
+        }
+        // 从后往前移除，避免索引变化
+        for range in rangesToRemove.reversed() {
+            result.removeSubrange(range)
+        }
+        
+        // 2. 移除 XML 格式的带内容标签：<xxx>...</xxx>
         if let regex = try? NSRegularExpression(
             pattern: #"<(imageSearch|search|image|weather|web|card|system)>(.*?)</\1>"#,
             options: [.dotMatchesLineSeparators, .caseInsensitive]) {
