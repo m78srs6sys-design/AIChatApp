@@ -125,5 +125,29 @@ final class ConversationStore: ObservableObject {
     func load() {
         conversations = PersistenceManager.shared.loadConversations()
         currentId = PersistenceManager.shared.loadCurrentId()
+        // 清理历史消息中残留的工具标签（如 <search>...</search>、<location/> 等）
+        for i in conversations.indices {
+            for j in conversations[i].messages.indices {
+                conversations[i].messages[j].content = Self.stripAllTags(conversations[i].messages[j].content)
+            }
+        }
+    }
+
+    /// 移除所有工具标签（用于清理历史消息中的残留标签）
+    static func stripAllTags(_ text: String) -> String {
+        var result = text
+        if let regex = try? NSRegularExpression(
+            pattern: #"<(search|image|weather|web)>(.*?)</\1>"#,
+            options: [.dotMatchesLineSeparators, .caseInsensitive]) {
+            result = regex.stringByReplacingMatches(
+                in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        if let locRegex = try? NSRegularExpression(
+            pattern: #"<location\s*/?>(\s*</location>)?"#,
+            options: [.caseInsensitive]) {
+            result = locRegex.stringByReplacingMatches(
+                in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
