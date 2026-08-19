@@ -85,80 +85,25 @@ final class ChatViewModel: ObservableObject {
             return
         }
 
-        // 显式关键词触发（用户主动意图）
-        let wantsImage = containsImageIntent(userText)
-        let wantsSearch = containsSearchIntent(userText)
-        let wantsLocation = containsLocationIntent(userText)
-        let wantsWeather = containsWeatherIntent(userText)
-        let wantsWebpage = containsWebpageIntent(userText)
-        let pageURL = extractURL(userText)
-
-        // 图片生成：只发图片，不调用大模型
-        if wantsImage {
-            do {
-                let url = try await skillService.generateImage(prompt: userText)
-                store.mutateCurrent {
-                    $0.messages.append(ChatMessage(role: .user, content: userText,
-                                                   attachments: [.image(url: url)]))
-                }
-            } catch {
-                errorMessage = "图片生成失败：\(error.localizedDescription)"
-            }
-            return
-        }
-
-        var attachments: [MessageAttachment] = []
-        var extraContexts: [String] = []
-        // 本轮已通过关键词执行过的技能类型（避免与模型主动调用重复）
-        var executedKinds = Set<String>()
-
-        // 网络搜索（维基百科，免密钥）
-        if wantsSearch {
-            if let results = try? await skillService.search(query: userText), !results.isEmpty {
-                attachments.append(.searchResults(results))
-                let ctx = results.prefix(3).map { "【\($0.title)】\($0.snippet ?? "")" }.joined(separator: "\n")
-                extraContexts.append("以下是网络搜索结果，请参考并尽量注明来源后再作答：\n\(ctx)")
-                executedKinds.insert("search")
-            }
-        }
-
-        // 天气（open-meteo，免密钥）
-        if wantsWeather {
-            if let w = try? await skillService.weather(from: userText) {
-                attachments.append(.weather(w))
-                extraContexts.append("当前\(w.city)天气：\(w.condition)，气温\(String(format: "%.0f", w.temperature))\(w.units)。")
-                executedKinds.insert("weather")
-            }
-        }
-
-        // 网页抓取与摘要（直连，免密钥）
-        if wantsWebpage, let url = pageURL {
-            if let page = try? await skillService.fetchWebpage(url: url) {
-                attachments.append(.webpage(page))
-                extraContexts.append("以下是网页内容（标题：\(page.title)），请基于它作答：\n\(page.summary)")
-                executedKinds.insert("web")
-            }
-        }
-
-        // 定位
-        if wantsLocation {
+        // 原生定位（设备能力，按需触发，不依赖大模型主动调用）
+        if containsLocationIntent(userText) {
             LocationService.shared.requestLocation()
         }
 
-        // 系统提示：允许模型主动调用联网功能（仅当开关打开）
+        // 系统提示：联网功能全部由大模型主动调用；需要时在思考后只输出调用标签并停止
         var systemPrompt: String? = nil
         if settings.onlineFeaturesEnabled {
-            systemPrompt = "你是一个智能助手。当你需要实时/最新信息时，可以在回复中插入调用标签来获取数据：<search>查询词</search>（网络搜索）、<weather>城市名</weather>（天气）、<web>网页URL</web>（网页摘要）、<image>画面描述</image>（生成图片）。仅在确实需要时调用，并基于返回结果作答，不要复述标签本身。"
+            systemPrompt = "你是一个智能助手。当你需要实时或最新的外部信息时，请在内部完成深度思考后，仅输出一个调用标签来获取数据，并立即结束回复，不要输出任何额外文字：<search>查询词</search>（网络搜索）、<weather>城市名</weather>（天气查询）、<web>网页URL</web>（网页摘要）、<image>画面描述</image>（生成图片）。只输出标签本身，不要复述、不要解释、不要在标签前后添加任何文字；输出标签后立刻停止。若用户的问题不需要任何外部信息，则像平常一样正常回答即可。"
         }
 
-        let aiId = appendAssistant(with: attachments)
+        let aiId = appendAssistant()
         statusMessage = "正在生成回复…"
 
         var raw = ""
+        var calledTool = false
         do {
             var history = store.current?.messages.filter { $0.id != aiId } ?? []
             if let sp = systemPrompt { history.insert(ChatMessage(role: .system, content: sp), at: 0) }
-            for ctx in extraContexts { history.append(ChatMessage(role: .user, content: ctx)) }
 
             try await onlineEngine.streamChat(messages: history, settings: settings,
                 onToken: { [weak self] token in
@@ -172,39 +117,22 @@ final class ChatViewModel: ObservableObject {
             )
             finishAssistant(aiId)
 
-            // AI 主动调用联网功能：执行标签并二次整合
+            // 大模型主动调用联网功能：执行标签并展示结果，模型即「自行结束」（不再二次整合）
             if settings.onlineFeaturesEnabled {
                 let calls = Self.extractCalls(raw)
                 if !calls.isEmpty {
-                    var ctx2: [String] = []
-                    var att2: [MessageAttachment] = []
-                    for (kind, content) in calls where !executedKinds.contains(kind) {
-                        await executeCall(kind: kind, content: content, ctx: &ctx2, att: &att2)
+                    var att: [MessageAttachment] = []
+                    for (kind, content) in calls {
+                        att.append(contentsOf: await executeCall(kind: kind, content: content))
                     }
-                    if !ctx2.isEmpty || !att2.isEmpty {
-                        clearContent(aiId)
-                        if !att2.isEmpty { appendAttachments(aiId, att2) }
-                        statusMessage = "正在整合联网结果…"
-                        var history2 = store.current?.messages.filter { $0.id != aiId } ?? []
-                        if let sp = systemPrompt { history2.insert(ChatMessage(role: .system, content: sp), at: 0) }
-                        for c in ctx2 { history2.append(ChatMessage(role: .user, content: c)) }
-                        var raw2 = ""
-                        try await onlineEngine.streamChat(messages: history2, settings: settings,
-                            onToken: { [weak self] token in
-                                guard let self else { return }
-                                raw2 += token
-                                self.setDisplay(to: aiId, cleaned: Self.stripCallTags(raw2))
-                            },
-                            onReasoning: { [weak self] token in
-                                self?.appendReasoning(to: aiId, token: token)
-                            }
-                        )
-                        finishAssistant(aiId)
-                    }
+                    if !att.isEmpty { appendAttachments(aiId, att) }
+                    // 深度思考过程保留；正文仅保留一句极简动作说明（非模型发言）
+                    setDisplay(to: aiId, cleaned: Self.callNote(calls))
+                    calledTool = true
                 }
             }
 
-            if settings.ttsEnabled,
+            if settings.ttsEnabled, !calledTool,
                let last = store.current?.messages.last(where: { $0.role == .assistant }) {
                 await synthesizeAndPlay(text: last.content)
             }
@@ -293,16 +221,6 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    private func clearContent(_ id: UUID) {
-        store.mutateCurrent { conv in
-            if let i = conv.messages.firstIndex(where: { $0.id == id }) {
-                conv.messages[i].content = ""
-                conv.messages[i].reasoning = ""
-                conv.messages[i].isStreaming = true
-            }
-        }
-    }
-
     private func appendAttachments(_ id: UUID, _ att: [MessageAttachment]) {
         store.mutateCurrent { conv in
             if let i = conv.messages.firstIndex(where: { $0.id == id }) {
@@ -331,32 +249,38 @@ final class ChatViewModel: ObservableObject {
     }
 
     // MARK: - AI 主动调用的联网功能执行
-    private func executeCall(kind: String, content: String,
-                             ctx: inout [String], att: inout [MessageAttachment]) async {
+    private func executeCall(kind: String, content: String) async -> [MessageAttachment] {
         switch kind {
         case "search":
             if let results = try? await skillService.search(query: content), !results.isEmpty {
-                att.append(.searchResults(results))
-                let c = results.prefix(3).map { "【\($0.title)】\($0.snippet ?? "")" }.joined(separator: "\n")
-                ctx.append("网络搜索「\(content)」结果：\n\(c)")
+                return [.searchResults(results)]
             }
         case "weather":
             if let w = try? await skillService.weather(from: content) {
-                att.append(.weather(w))
-                ctx.append("\(w.city)天气：\(w.condition)，气温\(String(format: "%.0f", w.temperature))\(w.units)。")
+                return [.weather(w)]
             }
         case "web":
             if let page = try? await skillService.fetchWebpage(url: content) {
-                att.append(.webpage(page))
-                ctx.append("网页（\(page.title)）内容：\n\(page.summary)")
+                return [.webpage(page)]
             }
         case "image":
             if let url = try? await skillService.generateImage(prompt: content) {
-                att.append(.image(url: url))
+                return [.image(url: url)]
             }
         default:
             break
         }
+        return []
+    }
+
+    /// 工具调用后的极简动作说明（由 App 生成，非模型发言）
+    static func callNote(_ calls: [(kind: String, content: String)]) -> String {
+        let labelMap = ["search": "搜索", "weather": "天气", "web": "网页摘要", "image": "图片生成"]
+        let parts = calls.compactMap { (kind, content) -> String? in
+            guard let label = labelMap[kind] else { return nil }
+            return "\(label)「\(content)」"
+        }
+        return "🛠 已调用：" + parts.joined(separator: "、")
     }
 
     // MARK: - TTS
@@ -380,41 +304,10 @@ final class ChatViewModel: ObservableObject {
         return try PDFExporter.export(messages: msgs)
     }
 
-    // MARK: - Intent Detection（触发词，已扩充）
-    private func containsImageIntent(_ text: String) -> Bool {
-        let keywords = ["画一张", "画一个", "生成图片", "生成一张图", "生成插画", "生成海报", "画图", "画张图",
-                        "AI画", "AI生成", "设计一张", "画个图", "画幅", "画个", "帮我画", "给我画", "画出来", "出张图", "配图"]
-        return keywords.contains { text.contains($0) }
-    }
-
-    private func containsSearchIntent(_ text: String) -> Bool {
-        let keywords = ["搜索", "搜一下", "查一下", "帮我查", "查查", "最新", "新闻", "今天", "实时", "搜一搜",
-                        "百度", "谷歌", "资料", "百科", "是什么", "介绍一下", "近况", "发生了什么", "怎么回事", "为什么", "对比一下", "谁"]
-        return keywords.contains { text.contains($0) }
-    }
-
+    // MARK: - Intent Detection（仅保留原生定位；联网功能改由大模型主动调用）
     private func containsLocationIntent(_ text: String) -> Bool {
         let keywords = ["我的位置", "我在哪", "当前位置", "附近", "定位", "我在哪里", "周边"]
         return keywords.contains { text.contains($0) }
-    }
-
-    private func containsWeatherIntent(_ text: String) -> Bool {
-        let keywords = ["天气", "气温", "温度", "下雨", "降雨", "weather", "多少度", "冷不冷", "热不冷",
-                        "湿度", "穿衣", "气象", "会下雨吗", "适合出门吗", "紫外线", "台风"]
-        return keywords.contains { text.lowercased().contains($0.lowercased()) }
-    }
-
-    private func containsWebpageIntent(_ text: String) -> Bool {
-        guard let url = extractURL(text) else { return false }
-        let keywords = ["总结", "摘要", "概括", "分析", "翻译", "读一下", "读这", "summarize", "提炼", "要点", "这篇", "这个网页", "解读", "说说这个"]
-        let onlyURL = text.trimmingCharacters(in: .whitespacesAndNewlines) == url
-        return onlyURL || keywords.contains { text.contains($0) }
-    }
-
-    private func extractURL(_ text: String) -> String? {
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
-        let matches = detector.matches(in: text, range: NSRange(text.startIndex..., in: text))
-        return matches.first.flatMap { Range($0.range, in: text).map { String(text[$0]) } }
     }
 
     // MARK: - 模型主动调用标签解析
