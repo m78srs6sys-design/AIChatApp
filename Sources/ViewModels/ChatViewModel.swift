@@ -91,7 +91,7 @@ final class ChatViewModel: ObservableObject {
         // 系统提示：联网功能全部由大模型主动调用；可链式调用多个工具，最后给出带解释的最终回答
         var systemPrompt: String? = nil
         if settings.onlineFeaturesEnabled {
-            systemPrompt = """
+            var sp = """
             你是一个会主动使用工具的智能助手。工作流程：
             1) 先在脑中深度思考用户真正需要什么信息。
             2) 需要时调用工具获取信息：
@@ -104,6 +104,9 @@ final class ChatViewModel: ObservableObject {
             4) 收集到足够信息后，用自然语言给出最终回答并解释；需要的数据会自动以卡片形式展示。
             规则：每次只输出一个工具标签；工具标签之外不要写多余文字。当你已经拿到所需信息、准备回答时，不要再输出工具标签，直接写回答。
             """
+            let wf = Self.workflowPrompt(settings.workflows)
+            if !wf.isEmpty { sp += "\n\n" + wf }
+            systemPrompt = sp
         }
 
         let aiId = appendAssistant()
@@ -407,7 +410,18 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: - 模型主动调用标签解析
 
-    /// 从模型回复中提取 <search>/<weather>/<web>/<image>/<location> 调用标签
+    /// 把用户自定义的「场景 → 工具流程」方案，渲染成注入系统提示的指令文本
+    private static func workflowPrompt(_ presets: [WorkflowPreset]) -> String {
+        let enabled = presets.filter { $0.enabled && !$0.steps.isEmpty }
+        guard !enabled.isEmpty else { return "" }
+        var lines = ["## 常用任务的标准处理流程（遇到对应类型的问题，请优先按下列顺序逐个调用工具）："]
+        for p in enabled {
+            let stepTexts = p.steps.enumerated().map { (i, s) in "\(i + 1). \(s.tool.tag(param: s.param))" }
+            lines.append("- 【\(p.name)】\(p.trigger)： \(stepTexts.joined(separator: " "))")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     static func extractCalls(_ text: String) -> [(kind: String, content: String)] {
         var results: [(String, String)] = []
         guard let regex = try? NSRegularExpression(
