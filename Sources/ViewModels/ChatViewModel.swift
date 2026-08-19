@@ -134,6 +134,8 @@ final class ChatViewModel: ObservableObject {
         var finalText = ""
         var iteration = 0
         let maxIter = 6
+        // 已调用过的工具缓存（防止无限循环，同一工具+同内容只执行一次）
+        var calledTools = Set<String>()
 
         do {
             while iteration < maxIter {
@@ -151,10 +153,8 @@ final class ChatViewModel: ObservableObject {
                     onToken: { [weak self] token in
                         guard let self else { return }
                         raw += token
-                        // 出现工具标签即视为中间步骤，冻结气泡；最终回答（无标签）才实时流式
-                        if Self.extractCalls(raw).isEmpty {
-                            self.setDisplay(to: aiId, cleaned: Self.stripCallTags(raw))
-                        }
+                        // 始终过滤标签，确保用户看不到任何标签内容
+                        self.setDisplay(to: aiId, cleaned: Self.stripCallTags(raw))
                     },
                     onReasoning: { [weak self] token in
                         self?.appendReasoning(to: aiId, token: token)
@@ -169,6 +169,14 @@ final class ChatViewModel: ObservableObject {
 
                 // 执行本轮工具调用，把结果作为后续上下文喂回模型
                 for (kind, content) in calls {
+                    // 防重复调用：同一工具+同内容只执行一次
+                    let callKey = "\(kind):\(content)"
+                    if calledTools.contains(callKey) {
+                        toolTurns.append(ChatMessage(role: .user,
+                            content: "[工具结果：\(Self.toolLabel(kind))] 已执行过，无需重复调用。"))
+                        continue
+                    }
+                    calledTools.insert(callKey)
                     let label = Self.toolLabel(kind)
                     statusMessage = "正在调用工具：\(label)…"
                     let (att, resultText) = await executeCallWithResult(kind: kind, content: content)
@@ -402,7 +410,7 @@ final class ChatViewModel: ObservableObject {
             return ([card], "[HTML 卡片已生成]")
 
         case "system":
-            let (desc, success) = skillService.executeSystemAction(command: content)
+            let (desc, success) = await skillService.executeSystemAction(command: content)
             let att = MessageAttachment.systemAction(action: content, description: desc)
             return ([att], "系统操作「\(content)」：\(desc)")
 
