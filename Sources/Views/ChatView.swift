@@ -47,7 +47,8 @@ struct ChatView: View {
                     selectionBar
                 }
                 InputBar(text: $chatVM.inputText, voiceMode: $voiceMode,
-                         isGenerating: chatVM.isGenerating) {
+                         isGenerating: chatVM.isGenerating,
+                         onVoiceError: { chatVM.errorMessage = $0 }) {
                     chatVM.send(settings: settingsVM.settings, activeModel: activeModel)
                 }
             }
