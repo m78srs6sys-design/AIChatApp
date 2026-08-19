@@ -123,7 +123,7 @@ final class OnlineSkillService {
                            units: "°C")
     }
 
-    // MARK: - 反向地理编码（BigDataCloud，免密钥，把坐标转为城市名）
+    // MARK: - 反向地理编码（BigDataCloud，免密钥，把坐标转为城市名，用于天气等城市级场景）
     func reverseGeocode(lat: Double, lon: Double) async -> String? {
         let urlStr = "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=\(lat)&longitude=\(lon)&localityLanguage=zh"
         guard let url = URL(string: urlStr),
@@ -135,6 +135,32 @@ final class OnlineSkillService {
         let locality = json["locality"] as? String
         let subdivision = json["principalSubdivision"] as? String
         return (city?.isEmpty == false ? city : (locality?.isEmpty == false ? locality : subdivision))
+    }
+
+    // MARK: - 街道级反向地理编码（CLGeocoder，精确到街道/门牌，用于非天气的定位场景）
+    private let geocoder = CLGeocoder()
+
+    func reverseGeocodeStreet(lat: Double, lon: Double) async -> String? {
+        let location = CLLocation(latitude: lat, longitude: lon)
+        return await withCheckedContinuation { continuation in
+            geocoder.reverseGeocodeLocation(location, preferredLocale: Locale(identifier: "zh_CN")) { placemarks, _ in
+                guard let pm = placemarks?.first else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                // 拼接街道级地址：国家 + 省/市 + 区/县 + 街道 + 门牌号
+                var parts: [String] = []
+                if let country = pm.country { parts.append(country) }
+                if let administrativeArea = pm.administrativeArea { parts.append(administrativeArea) }
+                if let subAdminArea = pm.subAdministrativeArea { parts.append(subAdminArea) }
+                if let locality = pm.locality { parts.append(locality) }
+                if let subLocality = pm.subLocality { parts.append(subLocality) }
+                if let thoroughfare = pm.thoroughfare { parts.append(thoroughfare) }
+                if let subThoroughfare = pm.subThoroughfare { parts.append(subThoroughfare) }
+                let result = parts.isEmpty ? nil : parts.joined(separator: " ")
+                continuation.resume(returning: result)
+            }
+        }
     }
 
     private static func weatherDescription(_ code: Int) -> String {
