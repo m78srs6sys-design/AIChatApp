@@ -356,7 +356,7 @@ struct WebViewCard: UIViewRepresentable {
     let html: String
     @State private var hasError: Bool = false
 
-    fileprivate func makeUIView(context: Context) -> ErrorHandlingHostingView {
+    func makeUIView(context: Context) -> ErrorHandlingHostingView {
         let config = WKWebViewConfiguration()
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isUserInteractionEnabled = false
@@ -370,12 +370,12 @@ struct WebViewCard: UIViewRepresentable {
         return hostingView
     }
 
-    fileprivate func updateUIView(_ view: ErrorHandlingHostingView, context: Context) {
+    func updateUIView(_ view: ErrorHandlingHostingView, context: Context) {
         context.coordinator.resetErrorIfNeeded()
         view.load(html: wrappedHTML)
     }
 
-    fileprivate func makeCoordinator() -> WebViewCoordinator {
+    func makeCoordinator() -> WebViewCoordinator {
         WebViewCoordinator()
     }
 
@@ -438,12 +438,14 @@ private final class WebViewCoordinator: NSObject, WKNavigationDelegate {
         hasError = true
     }
 
+    @MainActor
     func webView(_ webView: WKWebView,
                  didFail navigation: WKNavigation!,
                  withError error: Error) {
         markError()
     }
 
+    @MainActor
     func webView(_ webView: WKWebView,
                  didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) {
