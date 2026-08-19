@@ -115,16 +115,17 @@ struct InputBar: View {
                         // 上滑取消：丢弃识别结果
                         SpeechRecognizer.shared.cancel()
                     } else {
-                        // 松开发送：识别文本回填输入框并发送
-                        let t = SpeechRecognizer.shared.stop()
-                        if !t.isEmpty {
-                            let merged = (text + t).trimmingCharacters(in: .whitespacesAndNewlines)
-                            MainActor.assumeIsolated {
+                        // 延迟 0.5 秒再停止录音，防止用户话没说完
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 500_000_000)
+                            let t = SpeechRecognizer.shared.stop()
+                            if !t.isEmpty {
+                                let merged = (text + t).trimmingCharacters(in: .whitespacesAndNewlines)
                                 text = merged
                                 onSend()
+                            } else {
+                                SpeechRecognizer.shared.stop()
                             }
-                        } else {
-                            SpeechRecognizer.shared.stop()
                         }
                     }
                 default:
