@@ -69,6 +69,7 @@ targets:
     sources:
       - path: Widget
       - path: Sources/Models/ModelDownloadAttributes.swift
+      - path: Sources/Models/ModelInferenceAttributes.swift
 
     dependencies:
       - sdk: WidgetKit.framework
