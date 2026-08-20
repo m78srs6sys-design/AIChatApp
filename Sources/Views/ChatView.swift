@@ -172,7 +172,13 @@ struct ChatView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(AppTheme.background)
+        .background {
+            if settingsVM.settings.liquidGlassEnabled {
+                LiquidGlassBackdrop(radius: 16, material: .regularMaterial)
+            } else {
+                AppTheme.background
+            }
+        }
     }
 
     // MARK: - Message List
