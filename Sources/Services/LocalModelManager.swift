@@ -2,7 +2,9 @@ import Foundation
 import Combine
 import UserNotifications
 
-/// 本地模型下载管理：后台下载、断点续传、删除、进度通知、Live Activity
+/// 本地模型下载管理：后台下载、断点续传、删除、进度通知、Live Activity。
+/// 支持分片 GGUF（如 -00001-of-00002.gguf）：每个分片独立下载到同一目录，
+/// llama.cpp 加载时会自动合并分片；模型「已下载」状态 = 所有分片均存在。
 final class LocalModelManager: NSObject, ObservableObject {
     static let modelsDir: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -14,8 +16,11 @@ final class LocalModelManager: NSObject, ObservableObject {
     @Published var downloads: [String: DownloadState] = [:]
     @Published var activeModelId: String?
 
+    /// 任务表：key = "modelId||filename"（分片级粒度）
     private var tasks: [String: URLSessionDownloadTask] = [:]
     private var resumeData: [String: Data] = [:]
+    /// 各分片已下载字节数缓存（用于聚合整体进度展示）
+    private var partBytes: [String: Int64] = [:]
 
     /// 后台会话：切到后台 / 锁屏后下载仍会继续
     private lazy var session: URLSession = {
@@ -41,31 +46,57 @@ final class LocalModelManager: NSObject, ObservableObject {
         restoreBackgroundTasks()
     }
 
-    func isDownloaded(_ model: LocalModel) -> Bool {
-        FileManager.default.fileExists(atPath: path(for: model).path)
+    // MARK: - Path Helpers
+
+    /// 分片文件在本地磁盘的目标路径
+    private func partPath(for part: LocalModelPart) -> URL {
+        LocalModelManager.modelsDir.appendingPathComponent(part.filename)
     }
 
+    /// 模型入口文件路径（分片模型返回第一个分片，llama.cpp 会自动合并加载）
     func path(for model: LocalModel) -> URL {
-        LocalModelManager.modelsDir.appendingPathComponent(model.filename)
+        if let first = model.files.first {
+            return partPath(for: first)
+        }
+        return LocalModelManager.modelsDir.appendingPathComponent(model.filename)
+    }
+
+    func isDownloaded(_ model: LocalModel) -> Bool {
+        model.files.allSatisfy { FileManager.default.fileExists(atPath: partPath(for: $0).path) }
     }
 
     // MARK: - Download Control
     func startDownload(_ model: LocalModel) {
         guard downloads[model.id]?.status != .downloading else { return }
-        guard let url = URL(string: model.downloadURL) else { return }
+
+        let allReady = model.files.allSatisfy { FileManager.default.fileExists(atPath: partPath(for: $0).path) }
+        if allReady {
+            downloads[model.id] = DownloadState(downloaded: true, progress: 1.0, status: .completed)
+            return
+        }
 
         downloads[model.id]?.status = .downloading
         downloads[model.id]?.error = nil
 
-        let task: URLSessionDownloadTask
-        if let resume = resumeData[model.id] {
-            task = session.downloadTask(withResumeData: resume)
-        } else {
-            task = session.downloadTask(with: url)
+        // 为每个分片启动独立下载任务
+        for part in model.files {
+            let fileKey = Self.taskKey(modelId: model.id, filename: part.filename)
+            if FileManager.default.fileExists(atPath: partPath(for: part).path) {
+                // 该分片已存在（如断点续传后），标记完成
+                continue
+            }
+            guard let url = URL(string: part.downloadURL) else { continue }
+
+            let task: URLSessionDownloadTask
+            if let resume = resumeData[fileKey] {
+                task = session.downloadTask(withResumeData: resume)
+            } else {
+                task = session.downloadTask(with: url)
+            }
+            task.taskDescription = fileKey
+            tasks[fileKey] = task
+            task.resume()
         }
-        task.taskDescription = model.id
-        tasks[model.id] = task
-        task.resume()
 
         if #available(iOS 16.1, *) {
             DownloadActivityManager.shared.start(modelName: model.name, modelId: model.id)
@@ -73,27 +104,30 @@ final class LocalModelManager: NSObject, ObservableObject {
     }
 
     func pauseDownload(_ model: LocalModel) {
-        guard let task = tasks[model.id] else { return }
-        task.cancel { [weak self] data in
-            if let data {
-                self?.resumeData[model.id] = data
-                self?.saveResumeData()
+        for part in model.files {
+            let fileKey = Self.taskKey(modelId: model.id, filename: part.filename)
+            guard let task = tasks[fileKey] else { continue }
+            task.cancel { [weak self] data in
+                if let data {
+                    self?.resumeData[fileKey] = data
+                    self?.saveResumeData()
+                }
             }
-            DispatchQueue.main.async {
-                self?.downloads[model.id]?.status = .paused
-            }
-            if #available(iOS 16.1, *) {
-                DownloadActivityManager.shared.end(modelId: model.id)
-            }
+            tasks[fileKey] = nil
         }
-        tasks[model.id] = nil
+        downloads[model.id]?.status = .paused
+        if #available(iOS 16.1, *) {
+            DownloadActivityManager.shared.end(modelId: model.id)
+        }
     }
 
     func deleteModel(_ model: LocalModel) {
         pauseDownload(model)
-        let p = path(for: model)
-        try? FileManager.default.removeItem(at: p)
-        resumeData[model.id] = nil
+        for part in model.files {
+            let fileKey = Self.taskKey(modelId: model.id, filename: part.filename)
+            try? FileManager.default.removeItem(at: partPath(for: part))
+            resumeData[fileKey] = nil
+        }
         saveResumeData()
         downloads[model.id] = DownloadState(downloaded: false, progress: 0, status: .idle)
         if activeModelId == model.id {
@@ -108,6 +142,11 @@ final class LocalModelManager: NSObject, ObservableObject {
     func setActive(_ model: LocalModel) {
         activeModelId = model.id
         PersistenceManager.shared.saveActiveModelId(model.id)
+    }
+
+    // MARK: - Task Key
+    private static func taskKey(modelId: String, filename: String) -> String {
+        "\(modelId)||\(filename)"
     }
 
     // MARK: - Resume Data Persistence
@@ -127,9 +166,12 @@ final class LocalModelManager: NSObject, ObservableObject {
     private func restoreBackgroundTasks() {
         session.getTasksWithCompletionHandler { [weak self] _, _, downloadTasks in
             for task in downloadTasks {
-                guard let modelId = task.taskDescription else { continue }
+                guard let key = task.taskDescription else { continue }
+                let parts = key.components(separatedBy: "||")
+                guard parts.count == 2 else { continue }
+                let modelId = parts[0]
                 DispatchQueue.main.async {
-                    self?.tasks[modelId] = task
+                    self?.tasks[key] = task
                     if self?.downloads[modelId]?.status != .completed {
                         self?.downloads[modelId]?.status = .downloading
                     }
@@ -160,17 +202,38 @@ extension LocalModelManager: URLSessionDownloadDelegate {
                     didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64,
                     totalBytesExpectedToWrite: Int64) {
-        guard let modelId = downloadTask.taskDescription else { return }
-        let progress = totalBytesExpectedToWrite > 0
-            ? Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-            : 0
+        guard let key = downloadTask.taskDescription else { return }
+        let parts = key.components(separatedBy: "||")
+        guard parts.count == 2 else { return }
+        let modelId = parts[0]
+
+        // 缓存当前分片字节数，供整体进度聚合（统一在主队列读写，避免竞态）
         DispatchQueue.main.async { [weak self] in
-            self?.downloads[modelId]?.progress = progress
+            self?.partBytes[key] = totalBytesWritten
+            guard let self, let model = LocalModelCatalog.find(id: modelId) else { return }
+            var doneBytes: Int64 = 0
+            var totalBytes: Int64 = 0
+            for part in model.files {
+                let fileKey = Self.taskKey(modelId: model.id, filename: part.filename)
+                let p = self.partPath(for: part)
+                if FileManager.default.fileExists(atPath: p.path) {
+                    // 已完整落盘的分片：按实际大小计
+                    let size = (try? FileManager.default.attributesOfItem(atPath: p.path)[.size] as? Int64) ?? 0
+                    doneBytes += size
+                    totalBytes += size
+                } else if let w = self.partBytes[fileKey] {
+                    // 正在下载的分片：按缓存字节计
+                    doneBytes += w
+                    totalBytes += w
+                }
+            }
+            let progress = totalBytes > 0 ? Double(doneBytes) / Double(totalBytes) : 0
+            self.downloads[modelId]?.progress = min(1.0, progress)
             if #available(iOS 16.1, *) {
                 DownloadActivityManager.shared.update(modelId: modelId,
-                                                       progress: progress,
-                                                       downloadedBytes: totalBytesWritten,
-                                                       totalBytes: totalBytesExpectedToWrite)
+                                                       progress: self.downloads[modelId]?.progress ?? 0,
+                                                       downloadedBytes: doneBytes,
+                                                       totalBytes: totalBytes)
             }
         }
     }
@@ -178,36 +241,49 @@ extension LocalModelManager: URLSessionDownloadDelegate {
     func urlSession(_ session: URLSession,
                     downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
-        guard let modelId = downloadTask.taskDescription,
-              let model = LocalModelCatalog.find(id: modelId) else { return }
-        let dest = path(for: model)
+        guard let key = downloadTask.taskDescription else { return }
+        let parts = key.components(separatedBy: "||")
+        guard parts.count == 2 else { return }
+        let modelId = parts[0]
+        let filename = parts[1]
+
+        let dest = LocalModelManager.modelsDir.appendingPathComponent(filename)
         try? FileManager.default.removeItem(at: dest)
         do {
             try FileManager.default.moveItem(at: location, to: dest)
-            DispatchQueue.main.async { [weak self] in
-                self?.downloads[modelId] = DownloadState(downloaded: true, progress: 1.0, status: .completed)
-                self?.resumeData[modelId] = nil
-                self?.saveResumeData()
-                if #available(iOS 16.1, *) {
-                    DownloadActivityManager.shared.end(modelId: modelId)
-                }
-                self?.notifyDownloadComplete(model: model)
-            }
         } catch {
             DispatchQueue.main.async { [weak self] in
                 self?.downloads[modelId]?.status = .failed
                 self?.downloads[modelId]?.error = error.localizedDescription
+            }
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let model = LocalModelCatalog.find(id: modelId) else { return }
+            self.resumeData[key] = nil
+            self.saveResumeData()
+            if self.isDownloaded(model) {
+                self.downloads[modelId] = DownloadState(downloaded: true, progress: 1.0, status: .completed)
                 if #available(iOS 16.1, *) {
                     DownloadActivityManager.shared.end(modelId: modelId)
                 }
+                self.notifyDownloadComplete(model: model)
+            } else {
+                // 还有分片未完成，保持下载中
+                self.downloads[modelId]?.status = .downloading
+                self.downloads[modelId]?.progress = min(0.99, self.downloads[modelId]?.progress ?? 0)
             }
         }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let downloadTask = task as? URLSessionDownloadTask,
-              let modelId = downloadTask.taskDescription else { return }
-        // 成功时 error 为 nil，无需处理（已在 didFinishDownloadingTo 完成）
+              let key = downloadTask.taskDescription else { return }
+        let parts = key.components(separatedBy: "||")
+        guard parts.count == 2 else { return }
+        let modelId = parts[0]
+
         guard let error = error else { return }
 
         let nsError = error as NSError
@@ -217,15 +293,16 @@ extension LocalModelManager: URLSessionDownloadDelegate {
         }
 
         DispatchQueue.main.async { [weak self] in
+            guard let self, let model = LocalModelCatalog.find(id: modelId) else { return }
             // 尝试从错误中恢复断点数据
             if let data = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
-                self?.resumeData[modelId] = data
-                self?.saveResumeData()
-                self?.downloads[modelId]?.status = .failed
-                self?.downloads[modelId]?.error = "下载中断，可点击「继续」重试"
+                self.resumeData[key] = data
+                self.saveResumeData()
+                self.downloads[modelId]?.status = .failed
+                self.downloads[modelId]?.error = "下载中断，可点击「继续」重试"
             } else {
-                self?.downloads[modelId]?.status = .failed
-                self?.downloads[modelId]?.error = error.localizedDescription
+                self.downloads[modelId]?.status = .failed
+                self.downloads[modelId]?.error = error.localizedDescription
             }
             if #available(iOS 16.1, *) {
                 DownloadActivityManager.shared.end(modelId: modelId)
