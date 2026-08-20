@@ -4,6 +4,7 @@ import SwiftUI
 struct InputBar: View {
     @Binding var text: String
     @Binding var voiceMode: Bool
+    @EnvironmentObject var settingsVM: SettingsViewModel
     let isGenerating: Bool
     let onSend: () -> Void
     /// 强制终止生成的回调
@@ -46,12 +47,20 @@ struct InputBar: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .frame(minHeight: minHeight, maxHeight: maxHeight)
-        .background(AppTheme.surfaceElevated)
+        .background {
+            if settingsVM.settings.liquidGlassEnabled {
+                LiquidGlassBackdrop(radius: 14, material: .regularMaterial)
+            } else {
+                AppTheme.surfaceElevated
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(AppTheme.border.opacity(0.6), lineWidth: 0.5)
-        )
+        .overlay {
+            if !settingsVM.settings.liquidGlassEnabled {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(AppTheme.border.opacity(0.6), lineWidth: 0.5)
+            }
+        }
     }
 
     /// 圆形语音开关（始终显示在输入框内最左侧，无文字）
