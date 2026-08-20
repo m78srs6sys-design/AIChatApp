@@ -170,7 +170,7 @@ struct ChatView: View {
         .padding(.vertical, 10)
         .background {
             if settingsVM.settings.liquidGlassEnabled {
-                LiquidGlassBackdrop(radius: 16, material: .regularMaterial)
+                AppTheme.background
             } else {
                 AppTheme.background
             }
