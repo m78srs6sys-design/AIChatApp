@@ -281,10 +281,10 @@ enum PDFExporter {
     private static let pageBgColor = UIColor(red: 0.08, green: 0.07, blue: 0.12, alpha: 1)
     private static let userBubbleColor = UIColor(red: 0.20, green: 0.42, blue: 1.00, alpha: 0.95)
     private static let aiBubbleColor = UIColor(red: 0.12, green: 0.11, blue: 0.18, alpha: 1)
-    private static let accentColor = UIC(red: 1.00, green: 0.63, blue: 0.42, alpha: 1)
+    private static let accentColor = UIColor(red: 1.00, green: 0.63, blue: 0.42, alpha: 1)
     private static let primaryText = UIColor(white: 0.92, alpha: 1)
     private static let secondaryText = UIColor(white: 0.55, alpha: 1)
-    private static let cardBgColor = UIC(red: 0.15, green: 0.14, blue: 0.22, alpha: 1)
+    private static let cardBgColor = UIColor(red: 0.15, green: 0.14, blue: 0.22, alpha: 1)
 
     private static let titleAttrs: [NSAttributedString.Key: Any] = [
         .font: UIFont.boldSystemFont(ofSize: 20),
