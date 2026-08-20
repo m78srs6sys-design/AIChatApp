@@ -377,7 +377,7 @@ struct AttachmentView: View {
                         .stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5)
                 )
 
-        case .systemAction(let action, let description):
+        case .systemAction(_, let description):
             HStack(spacing: 10) {
                 Image(systemName: "gearshape.2.fill")
                     .font(.system(size: 16))
