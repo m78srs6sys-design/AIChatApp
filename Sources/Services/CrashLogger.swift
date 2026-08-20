@@ -1,8 +1,9 @@
 import Foundation
 import UIKit
+import Darwin
 
-/// 闪退日志记录：捕获未捕获 Objective-C 异常与致命信号，
-/// 自动写入 Documents/CrashLogs/ 目录（随 App 自动存储，可在系统「文件」或设置页查看/导出）。
+/// 闪退日志记录：捕获未捕获 Objective-C 异常与致命信号，自动写入 Documents/CrashLogs/。
+/// 信号/异常处理器中仅使用 async-signal-safe 的 POSIX write，避免在崩溃上下文中再触发新异常。
 final class CrashLogger {
     static let shared = CrashLogger()
 
@@ -35,65 +36,75 @@ final class CrashLogger {
     func install() {
         // 1. Objective-C 未捕获异常
         NSSetUncaughtExceptionHandler { exception in
-            let stack = exception.callStackSymbols.joined(separator: "\n")
-            let reason = exception.reason ?? ""
-            let name = exception.name.rawValue
-            let detail = """
-            异常名称: \(name)
-            异常原因: \(reason)
-
-            \(stack)
-            """
-            CrashLogger.writeLog(title: "未捕获异常", detail: detail)
+            var symbols: [String] = exception.callStackSymbols
+            if symbols.isEmpty { symbols = Thread.callStackSymbols }
+            let lines = [
+                "类型: 未捕获异常 \(exception.name.rawValue)",
+                "原因: \(exception.reason ?? "无")",
+                "",
+                symbols.joined(separator: "\n")
+            ]
+            crashWriteSync(title: "未捕获异常", detail: lines.joined(separator: "\n"))
+            _exit(1) // 立即退出，避免在异常上下文中继续执行触发二次崩溃
         }
 
-        // 2. 致命信号
+        // 2. 致命信号（仅安装一次，防止重入）
+        var action = sigaction()
+        action.sa_flags = SA_SIGINFO
+        action.__sigaction_u.__sa_handler = crashSignalHandler
         for sig in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGPIPE, SIGTRAP] {
-            signal(sig, crashSignalHandler)
+            sigaction(sig, &action, nil)
         }
     }
 }
 
-/// 生成崩溃日志内容
-private func buildCrashLog(title: String, detail: String) -> String {
-    let device = UIDevice.current
-    let appName = Bundle.main.infoDictionary?["CFBundleDisplayName"] as? String
-        ?? Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "AIChatApp"
-    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
-    let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
-    return """
+// MARK: - Async-signal-safe writer
+
+/// 在崩溃上下文中把日志写入文件。仅使用 POSIX open/write/close 与 time/localtime，
+/// 避免 Foundation 的 DateFormatter / FileManager 等可能持锁的 API 在崩溃上下文中死锁。
+private func crashWriteSync(title: String, detail: String) {
+    var body = """
     ============================================
     iOS 闪退日志
-    时间: \(Date())
-    设备: \(device.model) / \(device.systemName) \(device.systemVersion)
-    App: \(appName) v\(version) (build \(build))
+    时间: \(crashTimestamp())
     类型: \(title)
     --------------------------------------------
     \(detail)
     ============================================
     """
-}
+    body += "\n"
+    guard let data = body.data(using: .utf8) else { return }
 
-/// 写入一条崩溃日志（文件名为 crash_时间戳.log）
-private func writeCrashLogFile(_ content: String) {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyyMMdd_HHmmss"
-    let filename = "crash_\(formatter.string(from: Date())).log"
-    let path = CrashLogger.logDirectory.appendingPathComponent(filename)
-    if let data = content.data(using: .utf8) {
-        try? data.write(to: path)
+    let filename = "crash_\(crashTimestampForFilename()).log"
+    let path = CrashLogger.logDirectory.appendingPathComponent(filename).path
+
+    let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+    guard fd >= 0 else { return }
+    data.withUnsafeBytes { raw in
+        if let base = raw.baseAddress {
+            _ = write(fd, base, raw.count)
+        }
     }
+    close(fd)
 }
 
-extension CrashLogger {
-    /// 供异常 / 信号处理器调用：组装并落盘（信号处理器中尽量少做非安全调用，
-    /// 这里仅使用 Foundation 基础 API，主流崩溃收集方案均采用此做法）
-    static func writeLog(title: String, detail: String) {
-        writeCrashLogFile(buildCrashLog(title: title, detail: detail))
-    }
+private func crashTimestamp() -> String {
+    var t = time(nil)
+    guard let tm = localtime(&t) else { return "unknown" }
+    var buf = [CChar](repeating: 0, count: 64)
+    strftime(&buf, buf.count, "%Y-%m-%d %H:%M:%S", tm)
+    return String(cString: buf)
 }
 
-/// 信号处理器（C 函数指针签名）
+private func crashTimestampForFilename() -> String {
+    var t = time(nil)
+    guard let tm = localtime(&t) else { return "unknown" }
+    var buf = [CChar](repeating: 0, count: 64)
+    strftime(&buf, buf.count, "%Y%m%d_%H%M%S", tm)
+    return String(cString: buf)
+}
+
+/// 信号处理器（sa_handler 签名）
 private func crashSignalHandler(_ sig: Int32) {
     let name: String
     switch sig {
@@ -106,9 +117,9 @@ private func crashSignalHandler(_ sig: Int32) {
     case SIGTRAP: name = "SIGTRAP（断点陷阱）"
     default:      name = "Signal \(sig)"
     }
-    CrashLogger.writeLog(title: "致命信号 \(name)",
-                         detail: Thread.callStackSymbols.joined(separator: "\n"))
-    // 恢复默认处理，让系统走标准崩溃流程（日志已落盘）
+    crashWriteSync(title: "致命信号 \(name)",
+                   detail: Thread.callStackSymbols.joined(separator: "\n"))
+    // 恢复默认处理并重新触发信号，让系统生成标准崩溃报告
     signal(sig, SIG_DFL)
     raise(sig)
 }
