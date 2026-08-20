@@ -274,6 +274,7 @@ struct MessageBubble: View {
 /// 附件展示（图片 / 定位 / 搜索结果 / 天气 / 网页）
 struct AttachmentView: View {
     let attachment: MessageAttachment
+    @EnvironmentObject var settingsVM: SettingsViewModel
     /// HTML 卡片内容高度（由 WebView 内 JS 测量后回调，实现自适应）
     @State private var cardHeight: CGFloat = 140
     /// 图片全屏预览
@@ -330,7 +331,7 @@ struct AttachmentView: View {
                     .foregroundColor(AppTheme.secondaryText)
             }
             .padding(14)
-            .background(AppTheme.surfaceElevated)
+            .glassify(fallback: AppTheme.surfaceElevated, radius: AppTheme.cardRadius, enabled: settingsVM.settings.liquidGlassEnabled)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
         case .searchResults(let items):
             VStack(alignment: .leading, spacing: 8) {
@@ -357,7 +358,7 @@ struct AttachmentView: View {
                 }
             }
             .padding(14)
-            .background(AppTheme.surfaceElevated)
+            .glassify(fallback: AppTheme.surfaceElevated, radius: AppTheme.cardRadius, enabled: settingsVM.settings.liquidGlassEnabled)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
 
         case .weather(let w):
@@ -384,7 +385,7 @@ struct AttachmentView: View {
                 }
             }
             .padding(14)
-            .background(AppTheme.surfaceElevated)
+            .glassify(fallback: AppTheme.surfaceElevated, radius: AppTheme.cardRadius, enabled: settingsVM.settings.liquidGlassEnabled)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
 
         case .webpage(let p):
@@ -411,7 +412,7 @@ struct AttachmentView: View {
                 }
             }
             .padding(14)
-            .background(AppTheme.surfaceElevated)
+            .glassify(fallback: AppTheme.surfaceElevated, radius: AppTheme.cardRadius, enabled: settingsVM.settings.liquidGlassEnabled)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
 
         case .htmlCard(let html):
@@ -439,7 +440,7 @@ struct AttachmentView: View {
                 Spacer()
             }
             .padding(14)
-            .background(AppTheme.surfaceElevated)
+            .glassify(fallback: AppTheme.surfaceElevated, radius: AppTheme.cardRadius, enabled: settingsVM.settings.liquidGlassEnabled)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
         }
     }
