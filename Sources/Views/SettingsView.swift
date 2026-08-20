@@ -89,6 +89,12 @@ struct SettingsView: View {
                             )
                             Divider().background(AppTheme.divider)
                             toggleRow(
+                                title: "液态玻璃界面",
+                                subtitle: "毛玻璃 + 高光质感的实验性界面（默认关闭，开启后气泡/输入栏/顶栏呈现液态玻璃效果）",
+                                isOn: liquidGlassBinding
+                            )
+                            Divider().background(AppTheme.divider)
+                            toggleRow(
                                 title: "逐字震动反馈",
                                 subtitle: "生成每个字时触发极短震动（可在安静环境关闭）",
                                 isOn: hapticBinding
@@ -287,6 +293,13 @@ struct SettingsView: View {
         Binding(
             get: { settingsVM.settings.ttsEnabled },
             set: { settingsVM.settings.ttsEnabled = $0; settingsVM.save() }
+        )
+    }
+
+    private var liquidGlassBinding: Binding<Bool> {
+        Binding(
+            get: { settingsVM.settings.liquidGlassEnabled },
+            set: { settingsVM.settings.liquidGlassEnabled = $0; settingsVM.save() }
         )
     }
 
