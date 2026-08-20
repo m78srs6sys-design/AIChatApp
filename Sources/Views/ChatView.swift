@@ -18,6 +18,8 @@ struct ChatView: View {
     // 多选删除模式
     @State private var selectionMode: Bool = false
     @State private var selectedIDs: Set<UUID> = []
+    // 自动滚动防重入：流式输出时避免每个 token 都触发 scrollTo 造成更新期重入崩溃
+    @State private var autoScrollBusy = false
 
     private var activeModel: LocalModel? {
         guard let id = modelManager.activeModelId else { return nil }
@@ -209,9 +211,14 @@ struct ChatView: View {
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        guard let last = messages.last else { return }
+        guard let last = messages.last, !autoScrollBusy else { return }
+        autoScrollBusy = true
         withAnimation(.easeOut(duration: 0.2)) {
             proxy.scrollTo(last.id, anchor: .bottom)
+        }
+        // 防重入：短时间内合并多次滚动请求，避免更新期递归
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            autoScrollBusy = false
         }
     }
 
