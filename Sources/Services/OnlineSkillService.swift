@@ -52,17 +52,35 @@ final class OnlineSkillService {
         session = URLSession(configuration: cfg)
     }
 
-    // MARK: - 联网搜索（博查 BochaAI /v1/web-search）
-    /// 通过 OpenAI 兼容接口调用博查 Web Search，返回中文实时搜索结果。
+    // MARK: - 联网搜索（多源轮询：用户 API → 博查 → Bing RSS 免密钥兜底）
+    /// 通过 OpenAI 兼容接口调用 Web Search，返回中文实时搜索结果。
+    /// 依次尝试：用户配置的 API（/v1/web-search）→ 博查（/v1/web-search）→
+    /// Bing RSS（cn.bing.com，国内可访问、免密钥，兜底保证搜索始终可用）。
     func search(query: String, apiKey: String? = nil, baseURL: String? = nil) async throws -> [SearchResultItem] {
-        let apiBase = baseURL ?? bochaBaseURL
-        let endpoint = "\(apiBase)/web-search"
+        // 1. 用户配置的 API（OpenAI 兼容 web-search 端点）
+        if let baseURL, !baseURL.isEmpty {
+            if let results = try? await searchViaAPI(query: query, base: baseURL, apiKey: apiKey) {
+                return results
+            }
+        }
+        // 2. 博查（同 key 尝试；部分用户的 key 就是博查的）
+        if let results = try? await searchViaAPI(query: query, base: bochaBaseURL, apiKey: apiKey) {
+            return results
+        }
+        // 3. Bing RSS 兜底（免密钥、国内可访问，保证搜索功能始终可用）
+        if let results = try? await searchViaBingRSS(query: query) {
+            return results
+        }
+        return []
+    }
 
+    /// 通过 OpenAI 兼容的 /v1/web-search 端点搜索
+    private func searchViaAPI(query: String, base: String, apiKey: String?) async throws -> [SearchResultItem] {
+        let endpoint = "\(base)/web-search"
         let body: [String: Any] = [
             "query": query,
             "max_results": 5
         ]
-
         guard let url = URL(string: endpoint) else { throw ChatError.requestFailed }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -75,95 +93,247 @@ final class OnlineSkillService {
 
         guard let (data, _) = try? await session.data(for: request),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return []
+            throw ChatError.requestFailed
         }
 
-        // 博查返回格式：{ "results": [{ "title": "...", "url": "...", "snippet": "..." }] }
-        if let results = json["results"] as? [[String: Any]] {
-            return results.prefix(5).compactMap { item -> SearchResultItem? in
-                guard let title = item["title"] as? String else { return nil }
-                let rawSnippet = item["snippet"] as? String ?? ""
-                let snippet = rawSnippet
-                    .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                    .replacingOccurrences(of: "&quot;", with: "\"")
-                    .replacingOccurrences(of: "&amp;", with: "&")
-                    .replacingOccurrences(of: "&lt;", with: "<")
-                    .replacingOccurrences(of: "&gt;", with: ">")
-                    .replacingOccurrences(of: "&nbsp;", with: " ")
-                let urlStr = item["url"] as? String ?? ""
-                return SearchResultItem(title: title, url: urlStr, snippet: snippet.isEmpty ? nil : snippet)
-            }
+        // 兼容两种返回格式：{results:[...]} 与 {data:[...]}
+        let rawResults = (json["results"] as? [[String: Any]]) ?? (json["data"] as? [[String: Any]])
+        guard let results = rawResults else { throw ChatError.requestFailed }
+        let items = results.prefix(5).compactMap { item -> SearchResultItem? in
+            guard let title = item["title"] as? String else { return nil }
+            let rawSnippet = item["snippet"] as? String ?? ""
+            let snippet = rawSnippet
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&nbsp;", with: " ")
+            let urlStr = item["url"] as? String ?? ""
+            return SearchResultItem(title: title, url: urlStr, snippet: snippet.isEmpty ? nil : snippet)
         }
-        return []
+        guard !items.isEmpty else { throw ChatError.requestFailed }
+        return items
     }
 
-    // MARK: - AI 图片生成（博查 /v1/images 兼容 OpenAI 接口）
-    /// 通过 OpenAI 兼容接口调用博查图像生成，返回图片 URL。
-    /// 建议让模型在 <image> 标签内填写「英文画面描述」以获得最佳效果。
-    func generateImage(prompt: String, apiKey: String? = nil, baseURL: String? = nil) async throws -> String {
-        let apiBase = baseURL ?? bochaBaseURL
-        let endpoint = "\(apiBase)/images"
+    /// Bing RSS 搜索兜底（免密钥、国内可直连，返回结构化 RSS 结果）
+    private func searchViaBingRSS(query: String) async throws -> [SearchResultItem] {
+        let enc = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlStr = "https://cn.bing.com/search?q=\(enc)&format=rss"
+        guard let url = URL(string: urlStr) else { throw ChatError.requestFailed }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+                         forHTTPHeaderField: "User-Agent")
+        let (data, _) = try await session.data(for: request)
+        guard let xml = String(data: data, encoding: .utf8) else { throw ChatError.requestFailed }
 
+        // 解析 RSS：逐条提取 <item> 中的 <title>、<link>、<description>
+        let pattern = #"<item>(.*?)</item>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+            throw ChatError.requestFailed
+        }
+        let ns = xml as NSString
+        let matches = regex.matches(in: xml, range: NSRange(xml.startIndex..., in: xml))
+        guard !matches.isEmpty else { throw ChatError.requestFailed }
+
+        func inner(_ tag: String, in block: String) -> String? {
+            let pat = "<\(tag)>(.*?)</\(tag)>"
+            guard let r = try? NSRegularExpression(pattern: pat, options: [.dotMatchesLineSeparators]),
+                  let m = r.firstMatch(in: block, range: NSRange(block.startIndex..., in: block)) else { return nil }
+            return (block as NSString).substring(with: m.range(at: 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let items = matches.prefix(5).compactMap { m -> SearchResultItem? in
+            let block = ns.substring(with: m.range(at: 1))
+            guard let title = inner("title", in: block), !title.isEmpty else { return nil }
+            let link = inner("link", in: block) ?? ""
+            let desc = inner("description", in: block)?
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&amp;", with: "&")
+            return SearchResultItem(title: title, url: link,
+                                    snippet: desc?.isEmpty == false ? desc : nil)
+        }
+        guard !items.isEmpty else { throw ChatError.requestFailed }
+        return items
+    }
+
+    // MARK: - AI 图片生成（多端点轮询）
+    /// 通过 OpenAI 兼容接口调用图像生成，返回图片 URL。
+    /// 依次尝试：用户配置的 API → OpenAI 官方 → 博查；任一成功即返回。
+    /// 兼容响应中 data[].url 与 data[].b64_json 两种格式。
+    func generateImage(prompt: String, apiKey: String? = nil, baseURL: String? = nil) async throws -> String {
+        let key = apiKey ?? ""
+        // 候选端点（去重）：用户配置 → OpenAI 官方 → 博查
+        var endpoints: [String] = []
+        if let baseURL, !baseURL.isEmpty {
+            let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            endpoints.append(base + "/images/generations")
+            endpoints.append(base + "/images")
+        }
+        if !endpoints.contains(where: { $0.contains("api.openai.com") }) {
+            endpoints.append("https://api.openai.com/v1/images/generations")
+        }
+        if !endpoints.contains(where: { $0.contains("bochaai") }) {
+            endpoints.append(bochaBaseURL + "/images")
+        }
+
+        var lastError: Error = ChatError.requestFailed
+        for ep in endpoints {
+            do {
+                return try await performImageGeneration(endpoint: ep, prompt: prompt, apiKey: key)
+            } catch {
+                lastError = error
+                skillLogger.warning("generateImage: 端点 \(ep) 失败：\(error.localizedDescription)")
+            }
+        }
+        throw lastError
+    }
+
+    /// 单个端点的图片生成请求
+    private func performImageGeneration(endpoint: String, prompt: String, apiKey: String) async throws -> String {
         let body: [String: Any] = [
             "prompt": prompt,
             "n": 1,
             "size": "1024x1024"
         ]
-
         guard let url = URL(string: endpoint) else { throw ChatError.requestFailed }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let key = apiKey ?? ""
-        if !key.isEmpty {
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        if !apiKey.isEmpty {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        guard let (data, _) = try? await session.data(for: request),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let data_arr = json["data"] as? [[String: Any]],
-              let first = data_arr.first,
-              let urlStr = first["url"] as? String else {
+        guard let (data, response) = try? await session.data(for: request) else {
             throw ChatError.requestFailed
         }
-        return urlStr
+        // 非 2xx 视为失败，携带 HTTP 状态码便于上层提示
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw NSError(domain: "ImageGen", code: http.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let dataArr = json["data"] as? [[String: Any]],
+              let first = dataArr.first else {
+            throw ChatError.requestFailed
+        }
+        // OpenAI 兼容：data[0].url 或 data[0].b64_json（base64 转 data URI 便于直接渲染）
+        if let urlStr = first["url"] as? String, !urlStr.isEmpty {
+            return urlStr
+        }
+        if let b64 = first["b64_json"] as? String, !b64.isEmpty {
+            return "data:image/png;base64,\(b64)"
+        }
+        throw ChatError.requestFailed
     }
 
-    // MARK: - 真实图片搜索（博查 /v1/images 兼容 OpenAI 接口）
-    /// 区别于 AI 图片生成，此接口搜索真实世界的照片。
-    /// 通过博查图片搜索端点，传入「真实照片」提示以获得写实结果。
-    func searchImage(query: String, apiKey: String? = nil, baseURL: String? = nil) async throws -> String? {
-        let apiBase = baseURL ?? bochaBaseURL
-        let endpoint = "\(apiBase)/images"
+    // MARK: - 真实图片搜索（多源轮询：Bing 国内 → Wikimedia → Openverse → 博查）
+    /// 搜索真实世界的照片，返回图片 URL。
+    /// 依次尝试：Bing 图片（cn.bing.com，国内可访问、免密钥）→
+    /// Wikimedia Commons（免密钥）→ Openverse（免密钥）→ 博查（带密钥时兜底）。
+    func searchImage(query: String, apiKey: String? = nil) async throws -> String? {
+        // 1. Bing 图片搜索（国内可直连，免密钥，最优先）
+        if let url = try? await searchImageBing(query: query) { return url }
+        // 2. Wikimedia Commons（免密钥，真实照片）
+        if let url = try? await searchImageWikimedia(query: query) { return url }
+        // 3. Openverse（免密钥，开放版权图库）
+        if let url = try? await searchImageOpenverse(query: query) { return url }
+        // 4. 兜底：博查生成式（仅当配置了密钥，作为最后手段）
+        if let key = apiKey, !key.isEmpty {
+            if let url = try? await generateImage(
+                prompt: "Real photograph of \(query), photorealistic, actual photo",
+                apiKey: key
+            ) { return url }
+        }
+        return nil
+    }
 
-        // 在 prompt 前缀强调真实照片，避免模型生成 AI 画作
-        let realPhotoPrompt = "Real photograph of \(query), photorealistic, actual photo, not AI generated"
-
-        let body: [String: Any] = [
-            "prompt": realPhotoPrompt,
-            "n": 1,
-            "size": "1024x1024"
-        ]
-
-        guard let url = URL(string: endpoint) else { return nil }
+    /// Bing 图片搜索（cn.bing.com，国内可访问、免密钥）。
+    /// 抓取搜索结果页 HTML 并解析 murl 字段得到图片直链。
+    private func searchImageBing(query: String) async throws -> String {
+        let enc = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlStr = "https://cn.bing.com/images/search?q=\(enc)&first=0&count=10"
+        guard let url = URL(string: urlStr) else { throw ChatError.requestFailed }
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let key = apiKey ?? ""
-        if !key.isEmpty {
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 15
+        // 模拟浏览器 UA，避免被当作爬虫拒绝
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+                         forHTTPHeaderField: "User-Agent")
+        request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
+        let (data, _) = try await session.data(for: request)
+        guard let html = String(data: data, encoding: .utf8) else { throw ChatError.requestFailed }
 
-        guard let (data, _) = try? await session.data(for: request),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let data_arr = json["data"] as? [[String: Any]],
-              let first = data_arr.first,
-              let urlStr = first["url"] as? String else {
-            return nil
+        // 图片直链在 HTML 的 murl 字段中：murl&quot;:&quot;https://...&quot;
+        let pattern = #"murl&quot;:&quot;(.*?)&quot;"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { throw ChatError.requestFailed }
+        let ns = html as NSString
+        let matches = regex.matches(in: html, range: NSRange(html.startIndex..., in: html))
+        for m in matches {
+            let u = ns.substring(with: m.range(at: 1))
+            // 过滤：仅 http(s) 直链、排除图标、过长的 data URI
+            guard u.hasPrefix("http"), !u.lowercased().hasSuffix(".ico"),
+                  u.count < 500, !u.contains("data:image") else { continue }
+            let decoded = u
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&#39;", with: "'")
+            return decoded
         }
-        return urlStr
+        throw ChatError.requestFailed
+    }
+
+    /// Wikimedia Commons 图片搜索（免密钥，返回缩略图直链）
+    private func searchImageWikimedia(query: String) async throws -> String {
+        let enc = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlStr = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=\(enc)&gsrnamespace=6&gsrlimit=5&prop=imageinfo&iiprop=url&iiurlwidth=800&format=json"
+        guard let url = URL(string: urlStr) else { throw ChatError.requestFailed }
+        let (data, _) = try await session.data(from: url)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pages = json["query"] as? [String: Any],
+              let pageDict = pages["pages"] as? [String: Any] else {
+            throw ChatError.requestFailed
+        }
+        // 遍历所有结果页，取第一张有缩略图直链的图片
+        for (_, value) in pageDict {
+            guard let page = value as? [String: Any],
+                  let imageInfo = page["imageinfo"] as? [[String: Any]],
+                  let first = imageInfo.first else { continue }
+            // 优先缩略图（800px），其次原图 URL
+            if let thumb = first["thumburl"] as? String, !thumb.isEmpty {
+                return thumb
+            }
+            if let original = first["url"] as? String, !original.isEmpty {
+                return original
+            }
+        }
+        throw ChatError.requestFailed
+    }
+
+    /// Openverse 图片搜索（免密钥，开放版权图库）
+    private func searchImageOpenverse(query: String) async throws -> String {
+        let enc = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlStr = "https://api.openverse.org/v1/images/?q=\(enc)&page_size=5"
+        guard let url = URL(string: urlStr) else { throw ChatError.requestFailed }
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let (data, _) = try await session.data(for: request)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let results = json["results"] as? [[String: Any]],
+              let first = results.first else {
+            throw ChatError.requestFailed
+        }
+        // 优先缩略图，其次原图
+        if let thumb = first["thumbnail"] as? String, !thumb.isEmpty {
+            return thumb
+        }
+        if let original = first["url"] as? String, !original.isEmpty {
+            return original
+        }
+        throw ChatError.requestFailed
     }
 
     // MARK: - 天气（open-meteo，免密钥）
@@ -326,11 +496,6 @@ final class OnlineSkillService {
         text = text.replacingOccurrences(of: "&[a-z]+;", with: " ", options: .regularExpression)
         text = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
         return WebpageSummary(url: url, title: title, summary: String(text.prefix(8000)))
-    }
-
-    // MARK: - 语音合成（未接入后端时降级，不影响文本）
-    func synthesizeSpeech(text: String) async throws -> String {
-        throw ChatError.requestFailed
     }
 
     // MARK: - 系统 API 操作（亮度调节、设置跳转等）
