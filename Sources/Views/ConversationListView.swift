@@ -115,6 +115,7 @@ struct ConversationListView: View {
 struct ConversationRow: View {
     let conv: Conversation
     let isCurrent: Bool
+    @EnvironmentObject var settingsVM: SettingsViewModel
 
     var body: some View {
         HStack(spacing: 12) {
@@ -147,13 +148,6 @@ struct ConversationRow: View {
             }
         }
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(isCurrent ? AppTheme.accent.opacity(0.12) : AppTheme.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(isCurrent ? AppTheme.accent.opacity(0.45) : Color.clear, lineWidth: 1)
-        )
+        .glassify(fallback: (isCurrent ? AppTheme.accent.opacity(0.12) : AppTheme.surface), radius: 16, enabled: settingsVM.settings.liquidGlassEnabled)
     }
 }
