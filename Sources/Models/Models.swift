@@ -7,8 +7,8 @@ enum ChatMode: String, Codable, CaseIterable {
 
     var title: String {
         switch self {
-        case .online: return "联网模式"
-        case .offline: return "离线模式"
+        case .online: return "联网"
+        case .offline: return "离线"
         }
     }
 
