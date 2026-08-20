@@ -120,7 +120,7 @@ final class OnlineChatEngine {
             "messages": history,
             "stream": true,
             "temperature": 0.7,
-            "max_tokens": 1024
+            "max_tokens": 2048
         ]
 
         // 深度思考：开关打开时按用户选择的字段类型插入，关闭时不发送任何字段（避免多余字段导致 400）
