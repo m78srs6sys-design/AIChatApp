@@ -9,8 +9,52 @@ struct ModelManagementView: View {
             AppTheme.background.ignoresSafeArea()
             ScrollView {
                 VStack(spacing: 16) {
+                    // 云端模型列表拉取入口
+                    Button {
+                        Task { await modelManager.refreshRemoteCatalog() }
+                    } label: {
+                        HStack {
+                            Image(systemName: modelManager.isRefreshingRemote ? "arrow.triangle.2.circlepath" : "icloud.and.arrow.down")
+                                .rotationEffect(.degrees(modelManager.isRefreshingRemote ? 360 : 0))
+                                .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: modelManager.isRefreshingRemote)
+                            Text(modelManager.isRefreshingRemote ? "正在拉取模型列表…" : "从云端拉取更多模型")
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                        .foregroundColor(AppTheme.userBubbleText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(AppTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(BounceButtonStyle())
+                    .disabled(modelManager.isRefreshingRemote)
+
+                    if let err = modelManager.remoteLoadError {
+                        Text(err)
+                            .font(.system(size: 12))
+                            .foregroundColor(AppTheme.warning)
+                            .multilineTextAlignment(.center)
+                    }
+
+                    // 内置模型
                     ForEach(LocalModelCatalog.models) { model in
                         modelCard(model)
+                    }
+
+                    // 云端拉取的模型（去重，避免与内置重复）
+                    if !modelManager.remoteModels.isEmpty {
+                        HStack {
+                            Text("云端模型")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(AppTheme.secondaryText)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.top, 4)
+
+                        ForEach(modelManager.remoteModels) { model in
+                            modelCard(model)
+                        }
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
@@ -26,6 +70,9 @@ struct ModelManagementView: View {
                     .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
                 }
                 .padding(16)
+            }
+            .refreshable {
+                await modelManager.refreshRemoteCatalog()
             }
         }
         .navigationTitle("本地模型管理")
