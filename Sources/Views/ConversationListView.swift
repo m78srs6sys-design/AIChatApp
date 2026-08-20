@@ -5,6 +5,8 @@ import SwiftUI
 struct ConversationListView: View {
     @EnvironmentObject var store: ConversationStore
     @Binding var isPresented: Bool
+    /// 长按待删除的对话（用于确认弹窗）
+    @State private var pendingDelete: Conversation?
 
     var body: some View {
         NavigationStack {
@@ -24,6 +26,10 @@ struct ConversationListView: View {
                                     store.select(conv.id)
                                     isPresented = false
                                 }
+                            }
+                            // 长按删除对话
+                            .onLongPressGesture(minimumDuration: 0.5) {
+                                pendingDelete = conv
                             }
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
@@ -69,6 +75,23 @@ struct ConversationListView: View {
                             .foregroundColor(AppTheme.accent)
                     }
                 }
+            }
+            // 长按删除确认弹窗
+            .alert("删除对话", isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            )) {
+                Button("取消", role: .cancel) { pendingDelete = nil }
+                Button("删除", role: .destructive) {
+                    if let conv = pendingDelete {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            store.delete(conv.id)
+                        }
+                    }
+                    pendingDelete = nil
+                }
+            } message: {
+                Text("确定要删除「\(pendingDelete?.title ?? "")」吗？此操作不可恢复。")
             }
         }
     }
