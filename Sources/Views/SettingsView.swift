@@ -83,10 +83,53 @@ struct SettingsView: View {
                             )
                             Divider().background(AppTheme.divider)
                             toggleRow(
+                                title: "AI 回复自动朗读",
+                                subtitle: "生成完成后自动用系统语音朗读（本地合成，无需网络）",
+                                isOn: ttsBinding
+                            )
+                            Divider().background(AppTheme.divider)
+                            toggleRow(
                                 title: "逐字震动反馈",
                                 subtitle: "生成每个字时触发极短震动（可在安静环境关闭）",
                                 isOn: hapticBinding
                             )
+                        }
+                    }
+
+                    // 闪退日志
+                    section(title: "闪退日志") {
+                        VStack(spacing: 12) {
+                            let logs = CrashLogger.logFiles
+                            HStack(spacing: 8) {
+                                Image(systemName: logs.isEmpty ? "checkmark.shield.fill" : "exclamationmark.triangle.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(logs.isEmpty ? AppTheme.success : AppTheme.warning)
+                                Text(logs.isEmpty ? "暂无闪退记录" : "已自动记录 \(logs.count) 条闪退日志")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(AppTheme.primaryText)
+                                Spacer()
+                            }
+                            if let latest = logs.first,
+                               let attrs = try? FileManager.default.attributesOfItem(atPath: latest.path),
+                               let modDate = attrs[.modificationDate] as? Date {
+                                Text("最新记录时间：\(modDate.formatted(date: .abbreviated, time: .standard))")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(AppTheme.tertiaryText)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                ShareLink(item: latest) {
+                                    Label("分享最近一次日志", systemImage: "square.and.arrow.up")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(AppTheme.accent)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                        .background(AppTheme.accent.opacity(0.12))
+                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                }
+                            }
+                            Text("App 发生闪退时，日志会自动保存到「文件」App 的 AIChatApp 目录 / CrashLogs 文件夹，重启后仍可查看。")
+                                .font(.system(size: 11))
+                                .foregroundColor(AppTheme.tertiaryText)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
 
@@ -237,6 +280,13 @@ struct SettingsView: View {
         Binding(
             get: { settingsVM.settings.hapticPerChar },
             set: { settingsVM.settings.hapticPerChar = $0; settingsVM.save() }
+        )
+    }
+
+    private var ttsBinding: Binding<Bool> {
+        Binding(
+            get: { settingsVM.settings.ttsEnabled },
+            set: { settingsVM.settings.ttsEnabled = $0; settingsVM.save() }
         )
     }
 
