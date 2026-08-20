@@ -125,7 +125,7 @@ final class ChatViewModel: ObservableObject {
         if settings.onlineFeaturesEnabled {
             var sp = """
             你是一个会主动使用工具的智能助手。工作流程：
-            1) 先在脑中深度思考用户真正需要什么信息。
+            1) 先在脑中判断用户真正需要什么信息。
             2) 需要时调用工具获取信息：
                - <location/> 获取用户当前定位（城市 / 坐标）
                - <search>查询词</search> 联网搜索
@@ -140,6 +140,7 @@ final class ChatViewModel: ObservableObject {
             规则：
             - 每次只输出一个工具标签；工具标签之外不要写多余文字。
             - 生成图片时只能使用 <image>描述</image> 标签，严禁输出 <img> 标签、Markdown 图片语法 ![...](...)、<picture> 或任何 HTML/XML 代码来替代。系统会自动把 <image> 标签渲染成真实图片。
+            - 若某工具执行失败，不要反复重试同一工具，直接告诉用户该功能暂时不可用，并给出文字版帮助。
             - 当你已经拿到所需信息、准备回答时，不要再输出工具标签，直接写回答。
             """
             let wf = Self.workflowPrompt(settings.workflows)
@@ -397,8 +398,7 @@ final class ChatViewModel: ObservableObject {
             return ([], "网页抓取「\(content)」失败。")
 
         case "image":
-            // 图片生成：优先走独立图片 API（用户对话 API 通常不支持 /v1/images），
-            // 服务层内部会做多端点轮询 + 失败兜底
+            // 图片生成：服务层内部做多端点轮询（用户 API → 免费兜底 → OpenAI → 博查）
             do {
                 let url = try await skillService.generateImage(
                     prompt: content,
@@ -407,7 +407,7 @@ final class ChatViewModel: ObservableObject {
                 )
                 return ([.image(url: url)], "已生成图片：\(content)")
             } catch {
-                return ([], "图片生成失败：\(Self.friendlyImageError(error))。请检查对话 API 是否支持图片生成，或稍后再试。")
+                return ([], "图片生成暂时不可用（\(Self.friendlyImageError(error))），你可以稍后再试或直接使用图片搜索。")
             }
 
         case "imagesearch":
@@ -516,9 +516,9 @@ final class ChatViewModel: ObservableObject {
     }
 
     // MARK: - PDF Export
-    func exportPDF() async throws -> URL {
+    func exportPDF(progress: ((Double) -> Void)? = nil) async throws -> URL {
         guard let msgs = store.current?.messages, !msgs.isEmpty else { throw ChatError.notConfigured }
-        return try await PDFExporter.export(messages: msgs)
+        return try await PDFExporter.export(messages: msgs, progress: progress)
     }
 
     // MARK: - 模型主动调用标签解析
