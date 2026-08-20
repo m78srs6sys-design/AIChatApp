@@ -77,7 +77,13 @@ final class LocalInferenceEngine {
         }
 
         let prompt = buildPrompt(messages: messages)
-        let tokens = try tokenize(prompt: prompt, vocab: vocab)
+        var tokens = try tokenize(prompt: prompt, vocab: vocab)
+
+        // 防止历史过长导致解码失败：将 prompt 截断到上下文窗口内（保留最近内容）
+        let nCtx = Int(llama_n_ctx(context))
+        if tokens.count > nCtx - 64 {
+            tokens = Array(tokens.suffix(nCtx - 64))
+        }
 
         // 解码 prompt
         if decodePrompt(tokens: tokens, context: context) != 0 {
