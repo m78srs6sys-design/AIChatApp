@@ -134,7 +134,7 @@ final class ChatViewModel: ObservableObject {
                - <image>英文画面描述</image> 生成 AI 创意图片（当用户想生成画作、插画、海报等创意内容时使用）
                - <imageSearch>查询词</imageSearch> 搜索真实照片（当用户问某物/某地长什么样、想看真实图片时使用，区别于 AI 生成图片）
                - <card>HTML 代码</card> 生成可视化卡片（仅当用户主动要求可视化，或纯文字无法表达清楚时使用；卡片内容需是完整 HTML）
-               - <system>命令</system> 执行系统操作（如 brightness 0.5 调节亮度、低电量 打开电池设置、wifi、蓝牙、显示、声音）
+               - <system>命令</system> 执行系统操作（格式必须简单：brightness 0.5、volume 0.5、torch on、torch off、低电量、wifi、蓝牙、显示、声音）
             3) 可以连续调用多个工具来逐步完成任务，例如：先 <location/> 得到所在城市，再 <search>该城市 附近景点</search>，再 <weather>我的位置</weather>。
             4) 收集到足够信息后，用自然语言给出最终回答并解释；需要的数据会自动以卡片形式展示。
             规则：
