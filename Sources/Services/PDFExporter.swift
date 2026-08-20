@@ -95,8 +95,8 @@ enum PDFExporter {
                 let bubbleX: CGFloat = isUser ? pageRect.width - margin - bodySize.width - 28 : margin
                 let bubbleRect = CGRect(x: bubbleX, y: y, width: bodySize.width + 28, height: bubbleHeight)
                 let bubblePath = UIBezierPath(roundedRect: bubbleRect,
-                                              cornerRadius: 16,
-                                              byRoundingCorners: isUser ? [.topLeft, .topRight, .bottomLeft] : [.topLeft, .topRight, .bottomRight])
+                                              byRoundingCorners: isUser ? [.topLeft, .topRight, .bottomLeft] : [.topLeft, .topRight, .bottomRight],
+                                              cornerRadii: CGSize(width: 16, height: 16))
                 (isUser ? Self.userBubbleColor : Self.aiBubbleColor).setFill()
                 bubblePath.fill()
                 content.draw(in: CGRect(x: bubbleX + 14, y: y + 10, width: bodySize.width, height: bodySize.height),
