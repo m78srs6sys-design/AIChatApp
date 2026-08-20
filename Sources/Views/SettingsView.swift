@@ -194,6 +194,19 @@ struct SettingsView: View {
                                     .background(AppTheme.accent.opacity(0.12))
                                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
+
+                            // 语音 / AI / 随机生成规则
+                            Button {
+                                showRuleGenerator = true
+                            } label: {
+                                Label("语音生成规则", systemImage: "mic.fill")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(AppTheme.accentSoft)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(AppTheme.accent.opacity(0.08))
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
                         }
                     }
 
@@ -252,6 +265,9 @@ struct SettingsView: View {
                 showEditor = false
             }
         }
+        .sheet(isPresented: $showRuleGenerator) {
+            WorkflowRuleGeneratorSheet()
+        }
     }
 
     @ViewBuilder
@@ -294,6 +310,7 @@ struct SettingsView: View {
     @State private var showEditor = false
     @State private var editingId: UUID? = nil
     @State private var draft: WorkflowPreset = .empty
+    @State private var showRuleGenerator = false
 
     private func openEdit(_ preset: WorkflowPreset?) {
         draft = preset ?? .empty
@@ -580,5 +597,200 @@ struct WorkflowStepCard: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - 语音 / AI / 随机生成「智能工具流程」规则
+struct WorkflowRuleGeneratorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var settingsVM: SettingsViewModel
+
+    @State private var text = ""
+    @State private var isRecording = false
+    @State private var isGenerating = false
+    @State private var message: String?
+    @State private var messageTint: Color = AppTheme.success
+
+    private let engine = OnlineChatEngine()
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                // 语音输入：点按开始 / 停止聆听
+                Button {
+                    toggleVoice()
+                } label: {
+                    Label(isRecording ? "正在聆听… 点按停止" : "点按说话，说出你想要什么规则",
+                          systemImage: isRecording ? "waveform" : "mic.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(AppTheme.userBubbleText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(isRecording ? AppTheme.error : AppTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                // 识别文本（可手动修改）
+                TextEditor(text: $text)
+                    .frame(minHeight: 120, maxHeight: 200)
+                    .font(.system(size: 14))
+                    .scrollContentBackground(.hidden)
+                    .background(AppTheme.surfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AppTheme.border.opacity(0.6), lineWidth: 0.5)
+                    )
+                    .overlay(alignment: .topLeading) {
+                        if text.isEmpty {
+                            Text("识别结果会出现在这里，也可手动修改…")
+                                .font(.system(size: 13))
+                                .foregroundColor(AppTheme.tertiaryText)
+                                .padding(.top, 8)
+                                .padding(.leading, 6)
+                                .allowsHitTesting(false)
+                        }
+                    }
+
+                // AI 生成规则
+                Button {
+                    generateWithAI()
+                } label: {
+                    Label(isGenerating ? "生成中…" : "让 AI 生成规则", systemImage: "sparkles")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(AppTheme.userBubbleText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(AppTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .disabled(isGenerating || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                // 随机生成
+                Button {
+                    generateRandom()
+                } label: {
+                    Label("随机生成 3 条规则", systemImage: "dice.fill")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(AppTheme.accent)
+                }
+
+                if let message {
+                    Text(message)
+                        .font(.system(size: 13))
+                        .foregroundColor(messageTint)
+                        .multilineTextAlignment(.center)
+                }
+
+                Spacer()
+            }
+            .padding(16)
+            .background(AppTheme.background.ignoresSafeArea())
+            .navigationTitle("生成规则")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func toggleVoice() {
+        if isRecording {
+            let t = SpeechRecognizer.shared.stop()
+            if !t.isEmpty { text = t }
+            isRecording = false
+        } else {
+            isRecording = SpeechRecognizer.shared.start()
+        }
+    }
+
+    private func generateWithAI() {
+        let desc = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !desc.isEmpty else { return }
+        isGenerating = true
+        message = nil
+        let sys = """
+        你是「智能工具流程」方案生成器。用户会描述一个使用场景，请为其设计 1~4 条常用工具流程方案。
+        只输出一个 JSON 数组，不要任何解释、不要 Markdown 代码块、不要其它文字。格式如下：
+        [{"name":"方案名","trigger":"触发场景描述","steps":[{"tool":"location"},{"tool":"search","param":"附近 好玩的景点"}]}]
+        要求：tool 只能是 location / search / weather / web / image / system 之一；location 不需要 param，其它工具建议给中文 param。
+        """
+        Task { @MainActor in
+            var raw = ""
+            do {
+                try await engine.streamChat(
+                    messages: [
+                        ChatMessage(role: .system, content: sys),
+                        ChatMessage(role: .user, content: desc)
+                    ],
+                    settings: settingsVM.settings,
+                    onToken: { raw += $0 },
+                    onReasoning: nil
+                )
+                let presets = Self.parsePresets(raw)
+                if presets.isEmpty {
+                    message = "没有解析到有效规则，请说得更具体一些，或换一种说法重试"
+                    messageTint = AppTheme.warning
+                } else {
+                    settingsVM.settings.workflows.append(contentsOf: presets)
+                    settingsVM.save()
+                    message = "已添加 \(presets.count) 条规则 ✅"
+                    messageTint = AppTheme.success
+                    text = ""
+                }
+            } catch {
+                message = "生成失败：\(error.localizedDescription)"
+                messageTint = AppTheme.error
+            }
+            isGenerating = false
+        }
+    }
+
+    private func generateRandom() {
+        let pool: [(String, String, [ToolStep])] = [
+            ("推荐景点", "用户想找当地 / 附近好玩的地方、旅游景点", [ToolStep(tool: .location), ToolStep(tool: .search, param: "附近 好玩的景点推荐")]),
+            ("天气咨询", "询问天气、气温、是否下雨、穿衣出行建议", [ToolStep(tool: .location), ToolStep(tool: .weather, param: "我的位置")]),
+            ("周边美食", "想找附近 / 当地好吃的、餐厅推荐", [ToolStep(tool: .location), ToolStep(tool: .search, param: "附近 美食餐厅推荐")]),
+            ("实时资讯", "询问最新新闻、时事、实时信息", [ToolStep(tool: .search, param: "今天的最新热点新闻")]),
+            ("网页速览", "想了解某个网页 / 链接的内容摘要", [ToolStep(tool: .web, param: "https://example.com")]),
+            ("生成图片", "想要一张图 / 配图 / 插画", [ToolStep(tool: .image, param: "a beautiful landscape")]),
+            ("出行路线", "询问怎么去某地、交通路线", [ToolStep(tool: .location), ToolStep(tool: .search, param: "从当前位置出发的路线")]),
+            ("系统操作", "调节亮度 / 音量、开关手电筒、跳转系统设置", [ToolStep(tool: .system, param: "brightness 50")]),
+        ]
+        let presets = pool.shuffled().prefix(3).map { WorkflowPreset(name: $0.0, trigger: $0.1, steps: $0.2) }
+        settingsVM.settings.workflows.append(contentsOf: presets)
+        settingsVM.save()
+        message = "已随机添加 \(presets.count) 条规则 🎲"
+        messageTint = AppTheme.success
+    }
+
+    /// 从 AI 返回的文本中解析 JSON 数组 → WorkflowPreset 列表
+    private static func parsePresets(_ raw: String) -> [WorkflowPreset] {
+        guard let start = raw.firstIndex(of: "["),
+              let end = raw.lastIndex(of: "]"),
+              start < end else { return [] }
+        let jsonStr = String(raw[start...end])
+        guard let data = jsonStr.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        var out: [WorkflowPreset] = []
+        for item in arr {
+            guard let name = item["name"] as? String,
+                  let trigger = item["trigger"] as? String else { continue }
+            var steps: [ToolStep] = []
+            if let stepArr = item["steps"] as? [[String: Any]] {
+                for s in stepArr {
+                    guard let toolRaw = (s["tool"] as? String)?.lowercased(),
+                          let tool = ToolKind(rawValue: toolRaw) else { continue }
+                    let param = (s["param"] as? String) ?? ""
+                    steps.append(ToolStep(tool: tool, param: param))
+                }
+            }
+            if !steps.isEmpty {
+                out.append(WorkflowPreset(name: name, trigger: trigger, steps: steps))
+            }
+        }
+        return out
     }
 }
