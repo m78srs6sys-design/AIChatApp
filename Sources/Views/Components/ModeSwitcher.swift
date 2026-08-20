@@ -3,6 +3,7 @@ import SwiftUI
 /// 模式切换胶囊（带渐变动画）
 struct ModeSwitcher: View {
     @Binding var mode: ChatMode
+    @EnvironmentObject var settingsVM: SettingsViewModel
 
     var body: some View {
         HStack(spacing: 0) {
@@ -33,8 +34,7 @@ struct ModeSwitcher: View {
             }
         }
         .padding(4)
-        .background(Capsule().fill(AppTheme.surface))
-        .overlay(Capsule().stroke(AppTheme.border.opacity(0.6), lineWidth: 0.5))
+        .glassifyCapsule(fallback: AppTheme.surface, enabled: settingsVM.settings.liquidGlassEnabled)
     }
 
     @Namespace private var namespace
