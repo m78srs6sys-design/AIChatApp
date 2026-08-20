@@ -74,10 +74,7 @@ struct InputBar: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(voiceMode ? AppTheme.userBubbleText : AppTheme.secondaryText)
                 .frame(width: 30, height: 30)
-                .background(Circle().fill(voiceMode ? AppTheme.accent : AppTheme.surface))
-                .overlay(
-                    Circle().stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5)
-                )
+                .glassCircle(fallback: (voiceMode ? AppTheme.accent : AppTheme.surface), enabled: settingsVM.settings.liquidGlassEnabled)
         }
         .buttonStyle(BounceButtonStyle())
     }
@@ -187,13 +184,7 @@ struct InputBar: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundColor(AppTheme.userBubbleText)
                 .frame(width: 30, height: 30)
-                .background(
-                    Circle()
-                        .fill(canSend || isGenerating ? AppTheme.accent : AppTheme.surfaceElevated)
-                )
-                .overlay(
-                    Circle().stroke(canSend || isGenerating ? Color.clear : AppTheme.border.opacity(0.5), lineWidth: 0.5)
-                )
+                .glassCircle(fallback: (canSend || isGenerating ? AppTheme.accent : AppTheme.surfaceElevated), enabled: settingsVM.settings.liquidGlassEnabled)
         }
         .buttonStyle(BounceButtonStyle())
         .disabled(!canSend && !isGenerating)
