@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import UIKit
 
 @MainActor
 final class ChatViewModel: ObservableObject {
@@ -51,6 +52,21 @@ final class ChatViewModel: ObservableObject {
 
     /// 当前正在执行的生成任务（用于强制终止）
     private var generationTask: Task<Void, Never>?
+    /// 后台生成保护：切后台后任务继续跑（联网流式 + 离线推理）
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+
+    /// 生成开始：申请后台执行时间，保证切到后台后任务不被立即挂起
+    private func beginBackgroundExecution() {
+        let bg = BackgroundTaskGuard.begin()
+        backgroundTask = bg
+        // 若 App 在后台且系统执行时间即将耗尽，任务会自然暂停；回到前台后仍继续
+    }
+
+    /// 生成结束：归还后台执行时间
+    private func endBackgroundExecution() {
+        BackgroundTaskGuard.end(backgroundTask)
+        backgroundTask = .invalid
+    }
 
     // MARK: - Send
     func send(settings: APISettings, activeModel: LocalModel?) {
@@ -64,6 +80,8 @@ final class ChatViewModel: ObservableObject {
         errorMessage = nil
         statusMessage = store.currentMode == .online ? "正在连接…" : "正在准备本地推理…"
         isGenerating = true
+        // 申请后台执行时间：切到后台后生成继续（联网流式 / 离线推理都不中断）
+        beginBackgroundExecution()
         let userMsg = ChatMessage(role: .user, content: text)
         store.mutateCurrent { $0.messages.append(userMsg) }
         store.persist()   // 立即落盘，防止生成过程中 App 被杀导致用户消息丢失
@@ -85,6 +103,7 @@ final class ChatViewModel: ObservableObject {
         isGenerating = false
         statusMessage = nil
         errorMessage = nil
+        endBackgroundExecution()
         store.persist()
     }
 
@@ -113,6 +132,7 @@ final class ChatViewModel: ObservableObject {
         defer {
             isGenerating = false
             statusMessage = nil
+            endBackgroundExecution()
             store.persist()
         }
         guard settings.isConfigured else {
@@ -281,6 +301,7 @@ final class ChatViewModel: ObservableObject {
         defer {
             isGenerating = false
             statusMessage = nil
+            endBackgroundExecution()
             store.persist()
         }
         guard let model = activeModel else {
