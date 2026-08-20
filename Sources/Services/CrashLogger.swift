@@ -94,9 +94,9 @@ extension CrashLogger {
 }
 
 /// 信号处理器（C 函数指针签名）
-private func crashSignalHandler(_ signal: Int32) {
+private func crashSignalHandler(_ sig: Int32) {
     let name: String
-    switch signal {
+    switch sig {
     case SIGABRT: name = "SIGABRT（程序中止）"
     case SIGSEGV: name = "SIGSEGV（非法内存访问）"
     case SIGBUS:  name = "SIGBUS（总线错误）"
@@ -104,11 +104,11 @@ private func crashSignalHandler(_ signal: Int32) {
     case SIGFPE:  name = "SIGFPE（算术异常）"
     case SIGPIPE: name = "SIGPIPE（管道破裂）"
     case SIGTRAP: name = "SIGTRAP（断点陷阱）"
-    default:      name = "Signal \(signal)"
+    default:      name = "Signal \(sig)"
     }
     CrashLogger.writeLog(title: "致命信号 \(name)",
                          detail: Thread.callStackSymbols.joined(separator: "\n"))
     // 恢复默认处理，让系统走标准崩溃流程（日志已落盘）
-    signal(signal, SIG_DFL)
-    raise(signal)
+    signal(sig, SIG_DFL)
+    raise(sig)
 }
