@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ModelManagementView: View {
     @EnvironmentObject var modelManager: LocalModelManager
+    @EnvironmentObject var settingsVM: SettingsViewModel
 
     var body: some View {
         ZStack {
@@ -21,7 +22,7 @@ struct ModelManagementView: View {
                             .foregroundColor(AppTheme.secondaryText)
                     }
                     .padding(16)
-                    .background(AppTheme.surface)
+                    .glassify(fallback: AppTheme.surface, radius: AppTheme.cardRadius, enabled: settingsVM.settings.liquidGlassEnabled)
                     .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
                 }
                 .padding(16)
@@ -93,18 +94,18 @@ struct ModelManagementView: View {
                 switch state.status {
                 case .idle, .failed:
                     Button("下载") { modelManager.startDownload(model) }
-                        .buttonStyle(PrimaryActionButtonStyle())
+                        .buttonStyle(PrimaryActionButtonStyle(glass: settingsVM.settings.liquidGlassEnabled))
                 case .downloading:
                     Button("暂停") { modelManager.pauseDownload(model) }
-                        .buttonStyle(SecondaryActionButtonStyle())
+                        .buttonStyle(SecondaryActionButtonStyle(glass: settingsVM.settings.liquidGlassEnabled))
                 case .paused:
                     Button("继续") { modelManager.startDownload(model) }
-                        .buttonStyle(PrimaryActionButtonStyle())
+                        .buttonStyle(PrimaryActionButtonStyle(glass: settingsVM.settings.liquidGlassEnabled))
                 case .completed:
                     Button(isActive ? "已选择" : "使用此模型") {
                         modelManager.setActive(model)
                     }
-                    .buttonStyle(PrimaryActionButtonStyle())
+                    .buttonStyle(PrimaryActionButtonStyle(glass: settingsVM.settings.liquidGlassEnabled))
                     .opacity(isActive ? 0.5 : 1.0)
                     .disabled(isActive)
                     Spacer()
@@ -114,7 +115,7 @@ struct ModelManagementView: View {
                         Image(systemName: "trash")
                             .foregroundColor(AppTheme.error)
                             .frame(width: 40, height: 40)
-                            .background(Circle().fill(AppTheme.surfaceElevated))
+                            .glassCircle(fallback: AppTheme.surfaceElevated, enabled: settingsVM.settings.liquidGlassEnabled)
                     }
                     .buttonStyle(BounceButtonStyle())
                 }
@@ -127,7 +128,7 @@ struct ModelManagementView: View {
             }
         }
         .padding(16)
-        .background(AppTheme.surface)
+        .glassify(fallback: AppTheme.surface, radius: AppTheme.cardRadius, enabled: settingsVM.settings.liquidGlassEnabled)
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
     }
 
@@ -145,37 +146,47 @@ struct ModelManagementView: View {
             .foregroundColor(color)
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
-            .background(Capsule().fill(color.opacity(0.15)))
+            .glassifyCapsule(fallback: color.opacity(0.15), enabled: settingsVM.settings.liquidGlassEnabled)
     }
 }
 
 // MARK: - Button Styles
 struct PrimaryActionButtonStyle: ButtonStyle {
+    var glass: Bool = false
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let base = configuration.label
             .font(.system(size: 14, weight: .semibold))
             .foregroundColor(AppTheme.userBubbleText)
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
-            .background(AppTheme.accent)
-            .clipShape(Capsule())
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
+        if glass {
+            return AnyView(base.glassifyCapsule(fallback: AppTheme.accent, enabled: true))
+        }
+        return AnyView(base
+            .background(AppTheme.accent)
+            .clipShape(Capsule()))
     }
 }
 
 struct SecondaryActionButtonStyle: ButtonStyle {
+    var glass: Bool = false
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let base = configuration.label
             .font(.system(size: 14, weight: .semibold))
             .foregroundColor(AppTheme.primaryText)
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
-            .background(AppTheme.surfaceElevated)
-            .clipShape(Capsule())
-            .overlay(Capsule().stroke(AppTheme.border.opacity(0.6), lineWidth: 0.5))
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
+        if glass {
+            return AnyView(base.glassifyCapsule(fallback: AppTheme.surfaceElevated, enabled: true))
+        }
+        return AnyView(base
+            .background(AppTheme.surfaceElevated)
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(AppTheme.border.opacity(0.6), lineWidth: 0.5)))
     }
 }
 
