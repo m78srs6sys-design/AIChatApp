@@ -49,7 +49,7 @@ struct InputBar: View {
         .frame(minHeight: minHeight, maxHeight: maxHeight)
         .background {
             if settingsVM.settings.liquidGlassEnabled {
-                LiquidGlassBackdrop(radius: 14, material: .regularMaterial)
+                AppTheme.surfaceElevated
             } else {
                 AppTheme.surfaceElevated
             }
