@@ -270,7 +270,7 @@ struct SettingsView: View {
                 content()
             }
             .padding(16)
-            .background(AppTheme.surface)
+            .glassify(fallback: AppTheme.surface, radius: AppTheme.cardRadius, enabled: settingsVM.settings.liquidGlassEnabled)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
         }
     }
@@ -350,9 +350,8 @@ struct SettingsView: View {
             .foregroundColor(AppTheme.primaryText)
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(AppTheme.surfaceElevated)
+            .glassify(fallback: AppTheme.surfaceElevated, radius: 16, enabled: settingsVM.settings.liquidGlassEnabled)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
         }
     }
 }
@@ -446,11 +445,10 @@ struct WorkflowEditor: View {
             TextField(placeholder, text: text)
                 .font(.system(size: 15))
                 .foregroundColor(AppTheme.primaryText)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(AppTheme.surfaceElevated)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .glassify(fallback: AppTheme.surfaceElevated, radius: 16, enabled: settingsVM.settings.liquidGlassEnabled)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
     }
 }
@@ -474,7 +472,7 @@ struct WorkflowStepCard: View {
             paramRow
         }
         .padding(12)
-        .background(AppTheme.surfaceElevated)
+        .glassify(fallback: AppTheme.surfaceElevated, radius: 14, enabled: settingsVM.settings.liquidGlassEnabled)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .sheet(isPresented: $showSystemDialog) {
             systemCommandEditor
@@ -532,7 +530,7 @@ struct WorkflowStepCard: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(AppTheme.surface)
+                .glassify(fallback: AppTheme.surface, radius: 12, enabled: settingsVM.settings.liquidGlassEnabled)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         } else if step.tool.needsParam {
@@ -541,7 +539,7 @@ struct WorkflowStepCard: View {
                 .foregroundColor(AppTheme.primaryText)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(AppTheme.surface)
+                .glassify(fallback: AppTheme.surface, radius: 12, enabled: settingsVM.settings.liquidGlassEnabled)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         } else {
             Text("该工具无需参数")
@@ -570,12 +568,8 @@ struct WorkflowStepCard: View {
                     .foregroundColor(AppTheme.primaryText)
                     .scrollContentBackground(.hidden)
                     .padding(12)
-                    .background(AppTheme.surfaceElevated)
+                    .glassify(fallback: AppTheme.surfaceElevated, radius: 14, enabled: settingsVM.settings.liquidGlassEnabled)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5)
-                    )
                     .frame(minHeight: 100)
 
                 Spacer()
