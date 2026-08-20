@@ -55,7 +55,12 @@ final class DownloadActivityManager {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         guard inferenceActivities[inferenceId] == nil else { return }
         let attributes = ModelInferenceAttributes(modelName: modelName)
-        let state = ModelInferenceAttributes.ContentState(statusText: "正在生成回复…", progress: 0.02, tokens: 0)
+        let usage = SystemUsage.snapshot()
+        let state = ModelInferenceAttributes.ContentState(statusText: "正在生成回复…",
+                                                          usagePercent: usage.memory,
+                                                          cpuPercent: usage.cpu,
+                                                          tokens: 0,
+                                                          isFinal: false)
         do {
             inferenceActivities[inferenceId] = try Activity.request(attributes: attributes,
                                                                      contentState: state,
@@ -65,12 +70,14 @@ final class DownloadActivityManager {
         }
     }
 
-    /// 更新推理进度（每生成若干 token 调用一次）
-    func updateInference(tokens: Int, progress: Double) {
+    /// 更新推理占用率（每约 2 秒调用一次；百分比 = 资源占用率，非生成进度）
+    func updateInference(tokens: Int, cpuPercent: Double, memPercent: Double, statusText: String = "正在生成回复…") {
         guard let activity = inferenceActivities[inferenceId] else { return }
-        let state = ModelInferenceAttributes.ContentState(statusText: "正在生成回复…",
-                                                         progress: progress,
-                                                         tokens: tokens)
+        let state = ModelInferenceAttributes.ContentState(statusText: statusText,
+                                                          usagePercent: memPercent,
+                                                          cpuPercent: cpuPercent,
+                                                          tokens: tokens,
+                                                          isFinal: false)
         Task {
             await activity.update(using: state)
         }
@@ -80,7 +87,11 @@ final class DownloadActivityManager {
     func endInference() {
         guard let activity = inferenceActivities[inferenceId] else { return }
         inferenceActivities[inferenceId] = nil
-        let final = ModelInferenceAttributes.ContentState(statusText: "回复完成", progress: 1.0, tokens: 0)
+        let final = ModelInferenceAttributes.ContentState(statusText: "回复完成",
+                                                          usagePercent: SystemUsage.snapshot().memory,
+                                                          cpuPercent: SystemUsage.snapshot().cpu,
+                                                          tokens: 0,
+                                                          isFinal: true)
         Task {
             await activity.end(using: final, dismissalPolicy: .immediate)
         }
