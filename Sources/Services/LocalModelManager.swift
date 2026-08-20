@@ -162,6 +162,10 @@ final class LocalModelManager: NSObject, ObservableObject {
                 // 该分片已存在（如断点续传后），标记完成
                 continue
             }
+            // 预填已知大小（ModelScope API 精确返回），下载一开始就能显示大小和估算进度
+            if let s = part.size, s > 0 {
+                partExpected[fileKey] = s
+            }
             guard let url = URL(string: part.downloadURL) else { continue }
 
             let task: URLSessionDownloadTask
@@ -309,7 +313,10 @@ extension LocalModelManager: URLSessionDownloadDelegate {
         // 缓存当前分片字节数，供整体进度聚合（统一在主队列读写，避免竞态）
         DispatchQueue.main.async { [weak self] in
             self?.partBytes[key] = totalBytesWritten
-            self?.partExpected[key] = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : totalBytesWritten
+            // 服务器返回了真实总大小 → 覆盖；返回 0（chunked）→ 保留预填的 part.size
+            if totalBytesExpectedToWrite > 0 {
+                self?.partExpected[key] = totalBytesExpectedToWrite
+            }
             guard let self, let model = LocalModelCatalog.find(id: modelId)
                 ?? self.remoteModels.first(where: { $0.id == modelId }) else { return }
             var doneBytes: Int64 = 0
@@ -459,7 +466,12 @@ struct DownloadState {
 /// 只保留「单文件一次性下载」的模型（如 0.5B/1.5B/3B 的 q4_k_m），
 /// 分片模型（7B/14B 等）也会展示，但下载逻辑（分片自动合并）保持不变。
 enum ModelRemoteFetcher {
-    static let apiBase = "https://hf-mirror.com/api/models"
+    // 主源：魔搭 ModelScope（国内 CDN，速度快，API 返回文件精确大小）
+    static let msApiBase = "https://modelscope.cn/api/v1/models"
+    static let msFileBase = "https://modelscope.cn/models"
+    // 备用源：HuggingFace 国内镜像（ModelScope 失败时兜底）
+    static let hfApiBase = "https://hf-mirror.com/api/models"
+    static let hfFileBase = "https://hf-mirror.com"
 
     /// 候选模型仓库（作者/仓库名 → 显示名前缀）
     private static let repos: [(repo: String, prefix: String)] = [
@@ -486,54 +498,118 @@ enum ModelRemoteFetcher {
         }
     }
 
+    /// 通用的「文件名 + 大小」条目
+    private struct FileEntry {
+        let name: String
+        let size: Int64?
+    }
+
+    // MARK: - ModelScope 响应模型
+    private struct MSFile: Decodable {
+        let Name: String?
+        let Path: String?
+        let Size: Int64?
+    }
+    private struct MSData: Decodable { let Files: [MSFile]? }
+    private struct MSResponse: Decodable { let Data: MSData? }
+
+    // MARK: - HuggingFace 响应模型
     private struct HFSibling: Decodable {
         let rfilename: String
         let size: Int64?
     }
-
     private struct HFModel: Decodable {
         let siblings: [HFSibling]?
+    }
+
+    /// 使用哪个下载源（影响列表 API 和下载 URL）
+    private struct SourceInfo {
+        let listURL: String
+        let fileURL: URL
+        let isModelScope: Bool
     }
 
     /// 拉取并解析模型列表
     static func fetchModels() async throws -> [LocalModel] {
         var result: [LocalModel] = []
         for item in repos {
-            guard let url = URL(string: "\(apiBase)/\(item.repo)") else { continue }
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 20
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                continue
+            // 1) 优先拉 ModelScope 文件列表（带精确大小）
+            var entries: [FileEntry]? = nil
+            var fromMS = true
+            do {
+                entries = try await fetchEntriesFromModelScope(repo: item.repo)
+            } catch {
+                // 2) ModelScope 失败 → 兜底 hf-mirror
+                fromMS = false
+                entries = try? await fetchEntriesFromHF(repo: item.repo)
             }
-            guard let decoded = try? JSONDecoder().decode(HFModel.self, from: data),
-                  let siblings = decoded.siblings else { continue }
+            guard let entries = entries, !entries.isEmpty else { continue }
 
-            let ggufs = siblings.map(\.rfilename).filter { $0.hasSuffix(".gguf") }
+            let ggufs = entries
             guard !ggufs.isEmpty else { continue }
 
             // 偏好量化：优先找 q4_k_m 的单文件；若 q4_k_m 是分片，选用分片方案
-            let chosen = chooseFiles(ggufs: ggufs)
+            let chosen = chooseFiles(entries: ggufs)
             guard let chosen else { continue }
 
-            let model = makeModel(repo: item.repo, prefix: item.prefix, partNames: chosen)
+            let model = makeModel(repo: item.repo, prefix: item.prefix,
+                                  parts: chosen, fromModelScope: fromMS)
             result.append(model)
         }
         return result
     }
 
+    /// ModelScope：GET /api/v1/models/{repo}/repo/files?Revision=master&Recursive=true
+    private static func fetchEntriesFromModelScope(repo: String) async throws -> [FileEntry] {
+        guard let url = URL(string: "\(msApiBase)/\(repo)/repo/files?Revision=master&Recursive=true") else {
+            throw FetchError.invalidURL(repo)
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw FetchError.badResponse
+        }
+        let decoded = try JSONDecoder().decode(MSResponse.self, from: data)
+        let files = decoded.Data?.Files ?? []
+        return files.compactMap { f -> FileEntry? in
+            let name = f.Name ?? f.Path ?? ""
+            guard name.hasSuffix(".gguf") else { return nil }
+            return FileEntry(name: name, size: f.Size)
+        }
+    }
+
+    /// hf-mirror：GET /api/models/{repo}
+    private static func fetchEntriesFromHF(repo: String) async throws -> [FileEntry] {
+        guard let url = URL(string: "\(hfApiBase)/\(repo)") else {
+            throw FetchError.invalidURL(repo)
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw FetchError.badResponse
+        }
+        let decoded = try JSONDecoder().decode(HFModel.self, from: data)
+        return (decoded.siblings ?? [])
+            .filter { $0.rfilename.hasSuffix(".gguf") }
+            .map { FileEntry(name: $0.rfilename, size: $0.size) }
+    }
+
     /// 从文件列表里挑出一组要下载的文件（单个 or 分片）
-    private static func chooseFiles(ggufs: [String]) -> [String]? {
+    private static func chooseFiles(entries: [FileEntry]) -> [FileEntry]? {
+        let names = entries.map(\.name)
         // 非分片文件
-        let single = ggufs.filter { !$0.contains("-of-") }
+        let single = entries.filter { !$0.name.contains("-of-") }
         for q in quantPrefs {
             // 1) 尝试该量化的单文件
-            if let f = single.first(where: { $0.lowercased().contains(q) }) {
+            if let f = single.first(where: { $0.name.lowercased().contains(q) }) {
                 return [f]
             }
             // 2) 尝试该量化的全部分片（-0000x-of-N）
-            let parts = ggufs.filter { $0.lowercased().contains(q) && $0.contains("-of-") }
-                .sorted()
+            let parts = entries
+                .filter { $0.name.lowercased().contains(q) && $0.name.contains("-of-") }
+                .sorted { $0.name < $1.name }
             if !parts.isEmpty {
                 return parts
             }
@@ -542,41 +618,63 @@ enum ModelRemoteFetcher {
         return single.first.map { [$0] }
     }
 
-    private static func makeModel(repo: String, prefix: String, partNames: [String]) -> LocalModel {
-        let quantText = (partNames.first ?? "").replacingOccurrences(of: prefix.lowercased() + "-instruct-", with: "")
-        let name = partNames.count == 1 ? "\(prefix)（\(quantText)）" : "\(prefix)（\(quantText) · \(partNames.count) 分片）"
-        let parts = partNames.map { fn in
-            LocalModelPart(filename: fn, downloadURL: resolveURL(repo: repo, file: fn))
+    private static func makeModel(repo: String, prefix: String,
+                                  parts: [FileEntry], fromModelScope: Bool) -> LocalModel {
+        guard let first = parts.first else { return LocalModel(
+            id: "remote-\(repo)", name: prefix, detail: "云端拉取：\(repo)",
+            sizeText: "未知", downloadURL: "", filename: "",
+            contextLength: 8192, parts: []) }
+        let quantText = first.name
+            .replacingOccurrences(of: prefix.lowercased() + "-instruct-", with: "")
+        let name = parts.count == 1 ? "\(prefix)（\(quantText)）" : "\(prefix)（\(quantText) · \(parts.count) 分片）"
+
+        let totalBytes = parts.compactMap(\.size).reduce(0, +)
+        let sizeText: String
+        if totalBytes > 0 {
+            sizeText = "约 \(Self.prettyGB(totalBytes))"
+        } else {
+            sizeText = parts.count == 1 ? "单文件" : "\(parts.count) 个分片"
+        }
+
+        let modelParts = parts.map { entry in
+            LocalModelPart(filename: entry.name,
+                           downloadURL: resolveURL(repo: repo, file: entry.name, fromModelScope: fromModelScope),
+                           size: entry.size)
         }
         // 上下文长度按模型大小调整
         let ctx: Int
         if prefix.contains("0.5B") { ctx = 4096 }
         else if prefix.contains("1.5B") { ctx = 8192 }
+        else if prefix.contains("3B") { ctx = 8192 }
         else { ctx = 8192 }
-        let id = "remote-\(repo)-\(partNames.joined(separator: "+"))"
+        let id = "remote-\(repo)-\(parts.map(\.name).joined(separator: "+"))"
         return LocalModel(
             id: id,
             name: name,
             detail: "云端拉取：\(repo)",
-            sizeText: "约 \(formatSize(partNames.count))",
-            downloadURL: resolveURL(repo: repo, file: partNames[0]),
-            filename: partNames[0],
+            sizeText: sizeText,
+            downloadURL: modelParts[0].downloadURL,
+            filename: modelParts[0].filename,
             contextLength: ctx,
-            parts: parts
+            parts: modelParts
         )
     }
 
-    private static func resolveURL(repo: String, file: String) -> String {
-        "https://hf-mirror.com/\(repo)/resolve/main/\(file)"
+    /// 统一的下载地址：ModelScope 走 resolve（302 → 国内 CDN）；hf-mirror 直连
+    private static func resolveURL(repo: String, file: String, fromModelScope: Bool) -> String {
+        if fromModelScope {
+            return "\(msFileBase)/\(repo)/resolve/master/\(file)"
+        }
+        return "\(hfFileBase)/\(repo)/resolve/main/\(file)"
     }
 
-    private static func formatSize(_ partCount: Int) -> String {
-        switch partCount {
-        case 1: return "单文件"
-        case 2: return "2 个分片"
-        case 3: return "3 个分片"
-        case 4: return "4 个分片"
-        default: return "\(partCount) 个分片"
+    /// 字节数 → 人类可读大小（GB，保留 2 位小数的"约"）
+    static func prettyGB(_ bytes: Int64) -> String {
+        let gb = Double(bytes) / 1024.0 / 1024.0 / 1024.0
+        if gb >= 1 {
+            return String(format: "%.2f GB", gb)
         }
+        let mb = Double(bytes) / 1024.0 / 1024.0
+        return String(format: "%.0f MB", mb)
     }
 }
