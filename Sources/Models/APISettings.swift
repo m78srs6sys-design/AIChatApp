@@ -11,6 +11,7 @@ struct APISettings: Codable {
     var onlineFeaturesEnabled: Bool  // 是否允许 AI 主动调用联网附加功能
     var ttsEnabled: Bool             // 语音合成自动播放
     var hapticPerChar: Bool          // 生成每个字震动一次
+    var liquidGlassEnabled: Bool     // 液态玻璃界面（毛玻璃质感，默认关闭）
     var workflows: [WorkflowPreset]  // 智能工具流程方案（可自定义）
 
     init(apiURL: String = "",
@@ -19,10 +20,11 @@ struct APISettings: Codable {
          engine: APIEngine = .openAICompatible,
          deepThinking: Bool = false,
          deepThinkingField: DeepThinkingField = .thinkingEnabled,
-         onlineFeaturesEnabled: Bool = true,
-         ttsEnabled: Bool = false,
-         hapticPerChar: Bool = false,
-         workflows: [WorkflowPreset] = WorkflowPreset.builtins) {
+        onlineFeaturesEnabled: Bool = true,
+        ttsEnabled: Bool = false,
+        hapticPerChar: Bool = false,
+        liquidGlassEnabled: Bool = false,
+        workflows: [WorkflowPreset] = WorkflowPreset.builtins) {
         self.apiURL = apiURL
         self.apiKey = apiKey
         self.modelName = modelName
@@ -32,13 +34,14 @@ struct APISettings: Codable {
         self.onlineFeaturesEnabled = onlineFeaturesEnabled
         self.ttsEnabled = ttsEnabled
         self.hapticPerChar = hapticPerChar
+        self.liquidGlassEnabled = liquidGlassEnabled
         self.workflows = workflows
     }
 
     // 手写 Codable，保证旧版钥匙串数据（不含 workflows 字段）也能兼容解析、不会整体失败
     private enum CodingKeys: String, CodingKey {
         case apiURL, apiKey, modelName, engine, deepThinking, deepThinkingField
-        case onlineFeaturesEnabled, ttsEnabled, hapticPerChar, workflows
+        case onlineFeaturesEnabled, ttsEnabled, hapticPerChar, liquidGlassEnabled, workflows
     }
 
     init(from decoder: Decoder) throws {
@@ -52,6 +55,7 @@ struct APISettings: Codable {
         onlineFeaturesEnabled = try c.decodeIfPresent(Bool.self, forKey: .onlineFeaturesEnabled) ?? true
         ttsEnabled = try c.decodeIfPresent(Bool.self, forKey: .ttsEnabled) ?? false
         hapticPerChar = try c.decodeIfPresent(Bool.self, forKey: .hapticPerChar) ?? false
+        liquidGlassEnabled = try c.decodeIfPresent(Bool.self, forKey: .liquidGlassEnabled) ?? false
         workflows = try c.decodeIfPresent([WorkflowPreset].self, forKey: .workflows) ?? WorkflowPreset.builtins
     }
 
@@ -66,6 +70,7 @@ struct APISettings: Codable {
         try c.encode(onlineFeaturesEnabled, forKey: .onlineFeaturesEnabled)
         try c.encode(ttsEnabled, forKey: .ttsEnabled)
         try c.encode(hapticPerChar, forKey: .hapticPerChar)
+        try c.encode(liquidGlassEnabled, forKey: .liquidGlassEnabled)
         try c.encode(workflows, forKey: .workflows)
     }
 
