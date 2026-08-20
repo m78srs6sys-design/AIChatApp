@@ -87,6 +87,17 @@ struct ChatMessage: Identifiable, Codable, Hashable {
     }
 }
 
+/// GGUF 分片文件（如 qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf）
+struct LocalModelPart: Codable, Hashable {
+    let filename: String
+    let downloadURL: String
+
+    init(filename: String, downloadURL: String) {
+        self.filename = filename
+        self.downloadURL = downloadURL
+    }
+}
+
 /// 本地模型定义
 struct LocalModel: Identifiable, Codable, Hashable {
     let id: String
@@ -96,4 +107,56 @@ struct LocalModel: Identifiable, Codable, Hashable {
     let downloadURL: String
     let filename: String
     let contextLength: Int
+    /// 分片列表（空 = 单文件模型）。
+    /// 非空时每个分片分别下载到同一目录，文件名需保持 -NNNNN-of-NNNNN 模式，llama.cpp 会自动合并加载。
+    var parts: [LocalModelPart]
+
+    init(id: String, name: String, detail: String, sizeText: String,
+         downloadURL: String, filename: String, contextLength: Int,
+         parts: [LocalModelPart] = []) {
+        self.id = id
+        self.name = name
+        self.detail = detail
+        self.sizeText = sizeText
+        self.downloadURL = downloadURL
+        self.filename = filename
+        self.contextLength = contextLength
+        self.parts = parts
+    }
+
+    /// 该模型实际需要下载的全部文件（分片模型返回所有分片，单文件返回主文件）
+    var files: [LocalModelPart] {
+        parts.isEmpty
+            ? [LocalModelPart(filename: filename, downloadURL: downloadURL)]
+            : parts
+    }
+
+    // 手写 Codable：旧数据不含 parts 字段时兼容为空数组
+    private enum CodingKeys: String, CodingKey {
+        case id, name, detail, sizeText, downloadURL, filename, contextLength, parts
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        detail = try c.decode(String.self, forKey: .detail)
+        sizeText = try c.decode(String.self, forKey: .sizeText)
+        downloadURL = try c.decode(String.self, forKey: .downloadURL)
+        filename = try c.decode(String.self, forKey: .filename)
+        contextLength = try c.decode(Int.self, forKey: .contextLength)
+        parts = try c.decodeIfPresent([LocalModelPart].self, forKey: .parts) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(detail, forKey: .detail)
+        try c.encode(sizeText, forKey: .sizeText)
+        try c.encode(downloadURL, forKey: .downloadURL)
+        try c.encode(filename, forKey: .filename)
+        try c.encode(contextLength, forKey: .contextLength)
+        try c.encode(parts, forKey: .parts)
+    }
 }
