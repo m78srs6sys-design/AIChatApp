@@ -77,7 +77,7 @@ enum PDFExporter {
                 ensureSpace(18)
                 let timeText = df.string(from: msg.timestamp)
                 let timeSize = (timeText as NSString).boundingRect(
-                    with: CGSize(width: 120, height: .greatestFiniteMagnitude),
+                    with: CGSize(width: 120, height: CGFloat.greatestFiniteMagnitude),
                     options: [.usesLineFragmentOrigin, .usesFontLeading],
                     attributes: Self.timeAttrs, context: nil)
                 let timeX = isUser ? pageRect.width - margin - timeSize.width : margin
@@ -89,7 +89,7 @@ enum PDFExporter {
                 let content = msg.content.isEmpty ? "（无文字内容）" : msg.content
                 let bodyAttrs = isUser ? Self.userBodyAttrs : Self.aiBodyAttrs
                 let bodySize = (content as NSString).boundingRect(
-                    with: CGSize(width: bubbleMaxWidth - 32, height: .greatestFiniteMagnitude),
+                    with: CGSize(width: bubbleMaxWidth - 32, height: CGFloat.greatestFiniteMagnitude),
                     options: [.usesLineFragmentOrigin, .usesFontLeading],
                     attributes: bodyAttrs, context: nil)
                 let bubbleHeight = bodySize.height + 22
@@ -208,7 +208,7 @@ enum PDFExporter {
             for (idx, item) in items.prefix(5).enumerated() {
                 let line = "\(idx + 1). \(item.title)"
                 let size = (line as NSString).boundingRect(
-                    with: CGSize(width: cardWidth - 24, height: .greatestFiniteMagnitude),
+                    with: CGSize(width: cardWidth - 24, height: CGFloat.greatestFiniteMagnitude),
                     options: [.usesLineFragmentOrigin, .usesFontLeading],
                     attributes: Self.attachSubAttrs, context: nil)
                 linesText.append((line, Self.attachSubAttrs))
@@ -217,7 +217,7 @@ enum PDFExporter {
                 if let snippet = item.snippet, !snippet.isEmpty {
                     let s = "   \(snippet)"
                     let sSize = (s as NSString).boundingRect(
-                        with: CGSize(width: cardWidth - 28, height: .greatestFiniteMagnitude),
+                        with: CGSize(width: cardWidth - 28, height: CGFloat.greatestFiniteMagnitude),
                         options: [.usesLineFragmentOrigin, .usesFontLeading],
                         attributes: Self.attachSnippetAttrs, context: nil)
                     linesText.append((s, Self.attachSnippetAttrs))
@@ -240,7 +240,7 @@ enum PDFExporter {
             need(60)
             let summary = String(p.summary.prefix(400))
             let sSize = (summary as NSString).boundingRect(
-                with: CGSize(width: cardWidth - 24, height: .greatestFiniteMagnitude),
+                with: CGSize(width: cardWidth - 24, height: CGFloat.greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin, .usesFontLeading],
                 attributes: Self.attachSubAttrs, context: nil)
             let cardH = 22 + sSize.height + 18 + 10
@@ -263,7 +263,7 @@ enum PDFExporter {
             y += 24
             let plain = Self.htmlToText(html)
             let sSize = (plain as NSString).boundingRect(
-                with: CGSize(width: cardWidth - 24, height: .greatestFiniteMagnitude),
+                with: CGSize(width: cardWidth - 24, height: CGFloat.greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin, .usesFontLeading],
                 attributes: Self.attachSubAttrs, context: nil)
             let cardH = sSize.height + 10
