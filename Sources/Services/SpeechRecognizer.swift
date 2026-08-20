@@ -91,11 +91,11 @@ final class SpeechRecognizer: ObservableObject {
         self.request = request
 
         let node = audioEngine.inputNode
-        // 统一以 16kHz 单声道 Float32 送入识别引擎（AVAudioEngine 会自动重采样）
-        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                   sampleRate: 16_000,
-                                   channels: 1,
-                                   interleaved: false)
+        // ⚠️ 必须使用 inputNode 的实际输出格式安装 tap。
+        // 之前硬编码 16kHz 单声道自定义格式会导致 AVAudioEngine
+        // 抛 "Failed to create tap due to format mismatch" 并闪退。
+        // 识别引擎对任意采样率/声道均支持，直接在回调中追加原始 buffer。
+        let format = node.outputFormat(forBus: 0)
         node.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             self?.request?.append(buffer)
         }
