@@ -93,3 +93,51 @@ struct LiquidGlassBackdrop: View {
             }
     }
 }
+
+// MARK: - 全局液态玻璃助手（让任意表面/控件一键变成液态玻璃）
+extension View {
+    /// 矩形表面：开启液态玻璃时用毛玻璃底板，否则回落到原实色 fallback。
+    /// 用在原本 `.background(AppTheme.surface)` / `.surfaceElevated` 的地方。
+    @ViewBuilder
+    func glassify(fallback: Color,
+                  radius: CGFloat = AppTheme.cardRadius,
+                  material: Material = .regularMaterial,
+                  enabled: Bool) -> some View {
+        self.background {
+            if enabled {
+                LiquidGlassBackdrop(radius: radius, material: material)
+            } else {
+                fallback
+            }
+        }
+    }
+
+    /// 圆形控件：开启液态玻璃时用毛玻璃圆 + 高光描边，否则回落到原实色圆。
+    /// 用在原本 `.background(Circle().fill(AppTheme.surface))` 的按钮上。
+    @ViewBuilder
+    func glassCircle(fallback: Color, enabled: Bool, line: Color = AppTheme.border.opacity(0.5)) -> some View {
+        if enabled {
+            self.background(Circle().fill(.regularMaterial))
+                .overlay(Circle().stroke(Color.white.opacity(0.30), lineWidth: 1))
+                .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
+        } else {
+            self.background(Circle().fill(fallback))
+                .overlay(Circle().stroke(line, lineWidth: 0.5))
+        }
+    }
+
+    /// 胶囊控件（如模式切换）：开启液态玻璃时用毛玻璃胶囊，否则回落原实色胶囊。
+    @ViewBuilder
+    func glassifyCapsule(fallback: Color, enabled: Bool) -> some View {
+        self.background {
+            if enabled {
+                Capsule()
+                    .fill(.regularMaterial)
+                    .overlay(Capsule().stroke(Color.white.opacity(0.30), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
+            } else {
+                Capsule().fill(fallback)
+            }
+        }
+    }
+}
