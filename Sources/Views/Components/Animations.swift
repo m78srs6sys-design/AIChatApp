@@ -54,25 +54,25 @@ struct BounceButtonStyle: ButtonStyle {
 }
 
 /// 背景流动光晕（缓慢呼吸，提升质感）
+/// 注意：改用 TimelineView 驱动，不用 withAnimation(.repeatForever)+@State 改布局属性——
+/// 后者在 iOS 18/26 上会触发 SwiftUI `LocationBox.update` 无限递归 SIGTRAP 崩溃。
 struct AmbientBackground: View {
-    @State private var move = false
-
     var body: some View {
-        LinearGradient(
-            colors: [
-                AppTheme.background,
-                AppTheme.background.opacity(0.55),
-                AppTheme.accent.opacity(0.10),
-                AppTheme.background
-            ],
-            startPoint: move ? .topLeading : .bottomTrailing,
-            endPoint: move ? .bottomTrailing : .topLeading
-        )
-        .ignoresSafeArea()
-        .onAppear {
-            withAnimation(.easeInOut(duration: 9).repeatForever(autoreverses: true)) {
-                move.toggle()
-            }
+        TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            // 0...1 缓慢呼吸，周期 18s（一呼一吸）
+            let phase = (sin(t * 2 * .pi / 18) + 1) / 2
+            LinearGradient(
+                colors: [
+                    AppTheme.background,
+                    AppTheme.background.opacity(0.55),
+                    AppTheme.accent.opacity(0.10),
+                    AppTheme.background
+                ],
+                startPoint: UnitPoint(x: 0.5 - 0.5 * phase, y: 0.5 - 0.5 * phase),
+                endPoint: UnitPoint(x: 0.5 + 0.5 * phase, y: 0.5 + 0.5 * phase)
+            )
+            .ignoresSafeArea()
         }
     }
 }
