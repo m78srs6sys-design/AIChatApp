@@ -66,6 +66,7 @@ final class ChatViewModel: ObservableObject {
         isGenerating = true
         let userMsg = ChatMessage(role: .user, content: text)
         store.mutateCurrent { $0.messages.append(userMsg) }
+        store.persist()   // 立即落盘，防止生成过程中 App 被杀导致用户消息丢失
         inputText = ""
         store.autoTitleIfNeeded()
 
@@ -85,6 +86,23 @@ final class ChatViewModel: ObservableObject {
         statusMessage = nil
         errorMessage = nil
         store.persist()
+    }
+
+    /// 重新生成最后一条 AI 回复（删除该回复及其后内容，用上一条用户消息重新发送）
+    func regenerateLast(settings: APISettings, activeModel: LocalModel?) {
+        guard !isGenerating else { return }
+        guard let msgs = store.current?.messages,
+              let lastAI = msgs.last(where: { $0.role == .assistant }) else { return }
+        store.mutateCurrent { conv in
+            if let idx = conv.messages.firstIndex(where: { $0.id == lastAI.id }) {
+                conv.messages.removeSubrange(idx...)
+            }
+        }
+        store.persist()
+        if let lastUser = store.current?.messages.last(where: { $0.role == .user }) {
+            inputText = lastUser.content
+            send(settings: settings, activeModel: activeModel)
+        }
     }
 
     // MARK: - Online Flow（内置联网技能，Agent 式多步工具调用）
@@ -119,7 +137,10 @@ final class ChatViewModel: ObservableObject {
                - <system>命令</system> 执行系统操作（如 brightness 0.5 调节亮度、低电量 打开电池设置、wifi、蓝牙、显示、声音）
             3) 可以连续调用多个工具来逐步完成任务，例如：先 <location/> 得到所在城市，再 <search>该城市 附近景点</search>，再 <weather>我的位置</weather>。
             4) 收集到足够信息后，用自然语言给出最终回答并解释；需要的数据会自动以卡片形式展示。
-            规则：每次只输出一个工具标签；工具标签之外不要写多余文字。当你已经拿到所需信息、准备回答时，不要再输出工具标签，直接写回答。
+            规则：
+            - 每次只输出一个工具标签；工具标签之外不要写多余文字。
+            - 生成图片时只能使用 <image>描述</image> 标签，严禁输出 <img> 标签、Markdown 图片语法 ![...](...)、<picture> 或任何 HTML/XML 代码来替代。系统会自动把 <image> 标签渲染成真实图片。
+            - 当你已经拿到所需信息、准备回答时，不要再输出工具标签，直接写回答。
             """
             let wf = Self.workflowPrompt(settings.workflows)
             if !wf.isEmpty { sp += "\n\n" + wf }
@@ -211,7 +232,7 @@ final class ChatViewModel: ObservableObject {
             finishAssistant(aiId)
 
             if settings.ttsEnabled, !finalText.isEmpty {
-                await synthesizeAndPlay(text: finalText)
+                synthesizeAndPlay(text: finalText)
             }
         } catch {
             guard !Task.isCancelled else { return } // 用户主动终止，不报错
@@ -376,20 +397,24 @@ final class ChatViewModel: ObservableObject {
             return ([], "网页抓取「\(content)」失败。")
 
         case "image":
-            if let url = try? await skillService.generateImage(prompt: content, apiKey: settings.apiKey, baseURL: settings.apiURL) {
+            // 图片生成：优先走独立图片 API（用户对话 API 通常不支持 /v1/images），
+            // 服务层内部会做多端点轮询 + 失败兜底
+            do {
+                let url = try await skillService.generateImage(
+                    prompt: content,
+                    apiKey: settings.apiKey,
+                    baseURL: settings.apiURL
+                )
                 return ([.image(url: url)], "已生成图片：\(content)")
+            } catch {
+                return ([], "图片生成失败：\(Self.friendlyImageError(error))。请检查对话 API 是否支持图片生成，或稍后再试。")
             }
-            return ([], "图片生成失败。")
 
         case "imagesearch":
-            if let url = try? await skillService.searchImage(
-                query: content,
-                apiKey: settings.apiKey,
-                baseURL: settings.apiURL
-            ) {
+            if let url = try? await skillService.searchImage(query: content) {
                 return ([.image(url: url)], "已找到「\(content)」的真实图片")
             }
-            return ([], "未找到「\(content)」的真实图片。")
+            return ([], "未找到「\(content)」的真实图片，已尝试多个图片搜索源。")
 
         case "location":
             if let loc = await LocationService.shared.awaitLocation() {
@@ -409,8 +434,11 @@ final class ChatViewModel: ObservableObject {
             return ([], "无法获取定位（未授权或定位失败）。如需天气 / 周边信息，请直接告诉我城市名。")
 
         case "card":
-            // HTML 卡片：直接作为附件渲染，不返回文本
-            let card = MessageAttachment.htmlCard(html: content)
+            // HTML 卡片：清洗 markdown 代码块标记后直接作为附件渲染
+            var cardHTML = content
+            cardHTML = cardHTML.replacingOccurrences(of: "```[a-zA-Z]*", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let card = MessageAttachment.htmlCard(html: cardHTML)
             return ([card], "[HTML 卡片已生成]")
 
         case "system":
@@ -437,6 +465,21 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// 把底层图片生成错误翻译成用户可理解的提示
+    private static func friendlyImageError(_ error: Error) -> String {
+        let ns = error as NSError
+        switch ns.code {
+        case NSURLErrorTimedOut, NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost,
+             NSURLErrorNotConnectedToInternet:
+            return "网络连接异常"
+        case 400: return "请求参数被拒绝"
+        case 401, 403: return "API 密钥无效或无权限"
+        case 404: return "当前 API 不支持图片生成（缺少 /v1/images 接口）"
+        case 429: return "请求过于频繁，请稍后再试"
+        default: return "服务暂不可用"
+        }
+    }
+
     private static func weatherResultText(_ w: WeatherInfo) -> String {
         var s = "\(w.city)天气：\(w.condition)，气温 \(String(format: "%.0f", w.temperature))\(w.units)"
         if let h = w.humidity { s += "，湿度 \(h)%" }
@@ -460,25 +503,22 @@ final class ChatViewModel: ObservableObject {
         return labels.isEmpty ? "（已完成）" : "🛠 已调用：\(labels.joined(separator: "、"))"
     }
 
-    // MARK: - TTS
-    private func synthesizeAndPlay(text: String) async {
-        do {
-            let url = try await skillService.synthesizeSpeech(text: text)
-            currentAudioURL = url
-        } catch {
-            // 语音合成失败不影响文本展示
-        }
+    // MARK: - TTS（系统本地朗读，无需网络/密钥）
+    private func synthesizeAndPlay(text: String) {
+        SpeechService.shared.speak(text)
+        isPlayingAudio = true
     }
 
     func stopAudio() {
+        SpeechService.shared.stop()
         currentAudioURL = nil
         isPlayingAudio = false
     }
 
     // MARK: - PDF Export
-    func exportPDF() throws -> URL {
+    func exportPDF() async throws -> URL {
         guard let msgs = store.current?.messages, !msgs.isEmpty else { throw ChatError.notConfigured }
-        return try PDFExporter.export(messages: msgs)
+        return try await PDFExporter.export(messages: msgs)
     }
 
     // MARK: - 模型主动调用标签解析
@@ -552,8 +592,77 @@ final class ChatViewModel: ObservableObject {
                 results.append(("location", ""))
             }
         }
-        
+
+        // 3. 兜底识别：模型不遵循工具标签、直接输出 HTML/XML/Markdown 图片语法时，
+        //    识别其中的图片意图并转为「图片生成」工具调用（用户要求：识别 HTML/XML 以生成图片）。
+        if results.isEmpty {
+            // 3a. <img> HTML 标签：提取 alt / title / src 中的自然语言描述
+            if let imgRegex = try? NSRegularExpression(
+                pattern: #"<img\b[^>]*?(?:alt|title|src)\s*=\s*["']([^"']+)["'][^>]*>"#,
+                options: [.caseInsensitive]) {
+                let ns = text as NSString
+                let matches = imgRegex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+                for m in matches {
+                    let desc = ns.substring(with: m.range(at: 1))
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if Self.isImageLikeDescription(desc) {
+                        results.append(("image", desc))
+                    }
+                }
+            }
+            // 3b. Markdown 图片语法 ![描述](目标)：描述优先；目标非 URL 时也视为描述
+            if results.isEmpty,
+               let mdRegex = try? NSRegularExpression(
+                pattern: #"!\[([^\]]*)\]\(([^)]*)\)"#,
+                options: [.caseInsensitive]) {
+                let ns = text as NSString
+                let matches = mdRegex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+                for m in matches {
+                    let alt = ns.substring(with: m.range(at: 1))
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let dest = ns.substring(with: m.range(at: 2))
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !alt.isEmpty, Self.isImageLikeDescription(alt) {
+                        results.append(("image", alt))
+                    } else if !dest.isEmpty, !dest.lowercased().hasPrefix("http"),
+                              Self.isImageLikeDescription(dest) {
+                        results.append(("image", dest))
+                    }
+                }
+            }
+            // 3c. 其他 XML 变体（<Image>、<picture>、<image-generate> 等，含内容）
+            if results.isEmpty,
+               let xmlRegex = try? NSRegularExpression(
+                pattern: #"<(?:image|picture|img|photo|generate-image|image-generate)[^>]*>([^<]{2,})</(?:image|picture|img|photo|generate-image|image-generate)>"#,
+                options: [.dotMatchesLineSeparators, .caseInsensitive]) {
+                let ns = text as NSString
+                let matches = xmlRegex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+                for m in matches {
+                    let desc = ns.substring(with: m.range(at: 1))
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if Self.isImageLikeDescription(desc) {
+                        results.append(("image", desc))
+                    }
+                }
+            }
+        }
+
         return results
+    }
+
+    /// 判断一段文本是否适合作为「图片生成」的描述（排除 URL / 空占位 / 纯代码片段）
+    private static func isImageLikeDescription(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, t.count >= 2, t.count <= 500 else { return false }
+        let lower = t.lowercased()
+        // 排除 URL、data URI、纯文件名
+        if lower.hasPrefix("http") || lower.hasPrefix("data:") || lower.hasPrefix("//") { return false }
+        if t.contains("/") && !t.contains(" ") && !t.contains("，") && !t.contains(",") { return false }
+        // 排除占位符
+        let placeholder = ["image", "img", "图片", "图", "photo", "picture", "image url",
+                           "image_url", "src", "url", "image here", "example"]
+        if placeholder.contains(lower) { return false }
+        return true
     }
 
     /// 移除模型回复中的调用标签（仅展示干净文本）
@@ -602,6 +711,28 @@ final class ChatViewModel: ObservableObject {
             pattern: #"<location\s*/?>(\s*</location>)?"#,
             options: [.caseInsensitive]) {
             result = locRegex.stringByReplacingMatches(
+                in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+
+        // 3. 移除 HTML/Markdown 图片语法残留（模型不遵循标签约定时的兜底清理）：
+        //    <img ...>、![描述](目标)
+        if let imgRegex = try? NSRegularExpression(
+            pattern: #"<img\b[^>]*>"#,
+            options: [.caseInsensitive]) {
+            result = imgRegex.stringByReplacingMatches(
+                in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        if let mdImgRegex = try? NSRegularExpression(
+            pattern: #"!\[([^\]]*)\]\(([^)]*)\)"#,
+            options: [.caseInsensitive]) {
+            result = mdImgRegex.stringByReplacingMatches(
+                in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1")
+        }
+        // 移除 <Image> / <picture> 等其它 XML 图片变体的成对标签
+        if let xmlImgRegex = try? NSRegularExpression(
+            pattern: #"</?(?:image|picture|img|photo|generate-image|image-generate)[^>]*>"#,
+            options: [.caseInsensitive]) {
+            result = xmlImgRegex.stringByReplacingMatches(
                 in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
         }
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
