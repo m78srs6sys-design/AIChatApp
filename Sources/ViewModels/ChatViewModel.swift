@@ -334,17 +334,19 @@ final class ChatViewModel: ObservableObject {
         do {
             let history = store.current?.messages.filter { $0.id != aiId } ?? []
             var tokenCount = 0
-            try await localEngine.streamInfer(messages: history) { [weak self] token in
+            try await localEngine.streamInfer(messages: history,
+                                              onToken: { [weak self] token in
                 guard let self else { return }
                 self.appendToken(to: aiId, token: token)
-                tokenCount += 1
-                if tokenCount % 4 == 0 {
-                    let p = min(0.95, Double(tokenCount) / 600.0)
-                    if #available(iOS 16.1, *) {
-                        DownloadActivityManager.shared.updateInference(tokens: tokenCount, progress: p)
-                    }
+                tokenCount += token.count
+            }, onUsage: { [weak self] cpu, mem in
+                guard let self else { return }
+                if #available(iOS 16.1, *) {
+                    DownloadActivityManager.shared.updateInference(tokens: tokenCount,
+                                                                   cpuPercent: cpu,
+                                                                   memPercent: mem)
                 }
-            }
+            })
             finishAssistant(aiId)
         } catch {
             guard !Task.isCancelled else { return } // 用户主动终止，不报错
