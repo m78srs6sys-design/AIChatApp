@@ -339,12 +339,10 @@ struct ChatView: View {
             message: msg,
             isSelectionMode: selectionMode,
             isSelected: selectedIDs.contains(msg.id),
+            onSelect: { toggleSelect(msg.id) },
+            onDeleteRequested: { enterSelectionMode(preselect: msg.id) },
             onRegenerate: regen
-        ) {
-            toggleSelect(msg.id)
-        } onDeleteRequested: {
-            enterSelectionMode(preselect: msg.id)
-        }
+        )
     }
 
     private func enterSelectionMode(preselect: UUID? = nil) {
