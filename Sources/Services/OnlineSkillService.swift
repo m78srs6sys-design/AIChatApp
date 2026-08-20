@@ -1,6 +1,8 @@
 import Foundation
 import CoreLocation
 import UIKit
+import MediaPlayer
+import AVFoundation
 import os
 
 // MARK: - 私有辅助
@@ -160,10 +162,10 @@ final class OnlineSkillService {
         return items
     }
 
-    // MARK: - AI 图片生成（多端点轮询）
+    // MARK: - AI 图片生成（多端点轮询 + 免费兜底）
     /// 通过 OpenAI 兼容接口调用图像生成，返回图片 URL。
-    /// 依次尝试：用户配置的 API → OpenAI 官方 → 博查；任一成功即返回。
-    /// 兼容响应中 data[].url 与 data[].b64_json 两种格式。
+    /// 依次尝试：用户配置的 API → Pollinations.ai（免密钥免费）→ OpenAI 官方 → 博查；
+    /// 任一成功即返回。兼容响应中 data[].url 与 data[].b64_json 两种格式。
     func generateImage(prompt: String, apiKey: String? = nil, baseURL: String? = nil) async throws -> String {
         let key = apiKey ?? ""
         // 候选端点（去重）：用户配置 → OpenAI 官方 → 博查
@@ -189,7 +191,31 @@ final class OnlineSkillService {
                 skillLogger.warning("generateImage: 端点 \(ep) 失败：\(error.localizedDescription)")
             }
         }
+        // 最终兜底：Pollinations.ai 免密钥直链（URL 本身就是图片，耗时 3-10s）
+        if let url = try? await generateImagePollinations(prompt: prompt) {
+            return url
+        }
         throw lastError
+    }
+
+    /// Pollinations.ai 免费图片生成兜底：返回可直接渲染的图片 URL。
+    private func generateImagePollinations(prompt: String) async throws -> String {
+        let sanitized = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "&", with: " and ")
+            .replacingOccurrences(of: "?", with: "")
+        guard let encoded = sanitized.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "https://image.pollinations.ai/prompt/\(encoded)?width=1024&height=1024&nologo=true&seed=\(Int.random(in: 1...999999))&enhance=true") else {
+            throw ChatError.requestFailed
+        }
+        // 验证 URL 可达且能返回图片（HEAD 请求，超时 30s）
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 30
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw ChatError.requestFailed
+        }
+        return url.absoluteString
     }
 
     /// 单个端点的图片生成请求
@@ -498,78 +524,144 @@ final class OnlineSkillService {
         return WebpageSummary(url: url, title: title, summary: String(text.prefix(8000)))
     }
 
-    // MARK: - 系统 API 操作（亮度调节、设置跳转等）
+    // MARK: - 系统 API 操作（亮度/音量/手电筒/设置跳转等）
     /// 执行系统级操作。返回 (操作描述, 是否成功)。
-    /// 每步独立执行并受 5s 超时保护：超时的步骤被跳过并记录日志，
-    /// 仅向用户返回业务语义文案（不暴露内部命令 / 技术细节）。
+    /// 能直接生效的会立即执行（亮度、音量、手电筒），受限项（Wi-Fi/蓝牙/低电量）会跳对应设置页。
     func executeSystemAction(command: String) async -> (description: String, success: Bool) {
-        let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cmd = trimmed.lowercased()
 
         // 亮度调节（UIScreen 直接生效，无需权限）
         if cmd.hasPrefix("brightness") || cmd.hasPrefix("亮度") {
-            let parts = command.components(separatedBy: .whitespaces)
-            if parts.count >= 2, let val = Double(parts.last!.trimmingCharacters(in: CharacterSet(charactersIn: "%"))) {
-                let level = val > 1 ? val / 100.0 : val
-                let clamped = min(1.0, max(0.0, level))
-                let done = await withTimeout(5) {
-                    await MainActor.run { UIScreen.main.brightness = CGFloat(clamped) }
-                } != nil
-                if done {
-                    return ("已将屏幕亮度调整为 \(Int(clamped * 100))%", true)
-                }
-                return ("屏幕亮度调节未成功，请稍后再试", false)
-            }
-            let done = await withTimeout(5) {
-                await MainActor.run { UIScreen.main.brightness = 0.5 }
-            } != nil
-            if done {
-                return ("已将屏幕亮度调整为 50%", true)
-            }
-            return ("屏幕亮度调节未成功，请稍后再试", false)
+            return await setBrightness(trimmed)
         }
 
-        // 低电量 / 省电
+        // 音量调节（MPVolumeView，直接生效）
+        if cmd.hasPrefix("volume") || cmd.hasPrefix("音量") {
+            return await setVolume(trimmed)
+        }
+
+        // 手电筒 / 闪光灯（AVCaptureDevice，直接生效）
+        if cmd.hasPrefix("torch") || cmd.hasPrefix("手电筒") || cmd.hasPrefix("闪光灯") {
+            return await toggleTorch(trimmed)
+        }
+
+        // 低电量 / 省电（只能跳设置）
         if cmd == "low_power" || cmd == "低电量" || cmd == "省电" {
-            return await openSystemSettings("请手动前往「电池」开启低电量模式")
+            return await openSystemSettings(path: "BATTERY_USAGE", manual: "请手动开启低电量模式")
         }
 
         // Wi-Fi 设置
         if cmd == "wifi" || cmd == "无线" || cmd == "无线网络" {
-            return await openSystemSettings("请手动前往「Wi-Fi」设置")
+            return await openSystemSettings(path: "WIFI", manual: "请手动连接或开关 Wi-Fi")
         }
 
         // 蓝牙设置
         if cmd == "bluetooth" || cmd == "蓝牙" {
-            return await openSystemSettings("请手动前往「蓝牙」设置")
+            return await openSystemSettings(path: "Bluetooth", manual: "请手动连接或开关蓝牙")
         }
 
         // 显示与亮度
         if cmd == "display" || cmd == "显示" || cmd == "屏幕" || cmd == "显示与亮度" {
-            return await openSystemSettings("请手动前往「显示与亮度」")
+            return await openSystemSettings(path: "DISPLAY", manual: "请手动调节显示设置")
         }
 
         // 声音与触感
-        if cmd == "sound" || cmd == "声音" || cmd == "音量" {
-            return await openSystemSettings("请手动前往「声音与触感」")
+        if cmd == "sound" || cmd == "声音" || cmd == "声音与触感" {
+            return await openSystemSettings(path: "Sounds", manual: "请手动调节铃声与提醒")
         }
 
-        return ("未知系统操作「\(command)」，支持的命令：brightness <0-1>、低电量、wifi、蓝牙、显示、声音", false)
+        return ("未知系统操作「\(command)」。支持的命令：brightness 0.5、volume 0.5、torch on/off、低电量、wifi、蓝牙、显示、声音", false)
     }
 
-    /// 跳转系统设置页（iOS 沙盒限制：低电量 / Wi-Fi / 蓝牙等只能跳设置页手动操作）。
-    /// 受 5s 超时保护：超时则记录日志并返回失败文案，不暴露技术细节。
-    private func openSystemSettings(_ manual: String) async -> (description: String, success: Bool) {
+    // MARK: - 具体系统能力
+
+    private func setBrightness(_ cmd: String) async -> (description: String, success: Bool) {
+        let parts = cmd.components(separatedBy: .whitespaces)
+        let level: Double
+        if parts.count >= 2, let val = Double(parts.last!.trimmingCharacters(in: CharacterSet(charactersIn: "%"))) {
+            level = min(1.0, max(0.0, val > 1 ? val / 100.0 : val))
+        } else {
+            level = 0.5
+        }
+        let done = await withTimeout(5) {
+            await MainActor.run { UIScreen.main.brightness = CGFloat(level) }
+        } != nil
+        if done {
+            return ("已将屏幕亮度调整为 \(Int(level * 100))%", true)
+        }
+        return ("屏幕亮度调节失败", false)
+    }
+
+    private func setVolume(_ cmd: String) async -> (description: String, success: Bool) {
+        let parts = cmd.components(separatedBy: .whitespaces)
+        let level: Float
+        if parts.count >= 2, let val = Double(parts.last!.trimmingCharacters(in: CharacterSet(charactersIn: "%"))) {
+            level = Float(min(1.0, max(0.0, val > 1 ? val / 100.0 : val)))
+        } else {
+            level = 0.5
+        }
         let done = await withTimeout(5) {
             await MainActor.run {
+                let volumeView = MPVolumeView()
+                if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        slider.value = level
+                    }
+                }
+            }
+        } != nil
+        if done {
+            return ("已将系统音量调整为 \(Int(level * 100))%", true)
+        }
+        return ("音量调节失败", false)
+    }
+
+    private func toggleTorch(_ cmd: String) async -> (description: String, success: Bool) {
+        let on = cmd.contains("on") || cmd.contains("开") || cmd == "torch" || cmd == "手电筒" || cmd == "闪光灯"
+        let done = await withTimeout(5) {
+            await MainActor.run {
+                guard let device = AVCaptureDevice.default(for: .video), device.hasTorch else { return false }
+                do {
+                    try device.lockForConfiguration()
+                    device.torchMode = on ? .on : .off
+                    if on { try? device.setTorchModeOn(level: 1.0) }
+                    device.unlockForConfiguration()
+                    return true
+                } catch {
+                    return false
+                }
+            }
+        } != nil
+        if done {
+            return ("手电筒已\(on ? "打开" : "关闭")", true)
+        }
+        return ("手电筒操作失败（设备不支持或权限被拒绝）", false)
+    }
+
+    /// 跳转指定系统设置页；失败时回退到 App 设置页。
+    private func openSystemSettings(path: String, manual: String) async -> (description: String, success: Bool) {
+        let done = await withTimeout(5) {
+            await MainActor.run {
+                // 优先尝试打开具体面板（iOS 内部 scheme，部分版本可用）
+                let candidates = ["App-Prefs:root=\(path)", "prefs:root=\(path)"]
+                for urlString in candidates {
+                    if let url = URL(string: urlString), UIApplication.shared.canOpenURL(url) {
+                        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                        return true
+                    }
+                }
+                // 兜底：打开本 App 的系统设置页
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                    return true
                 }
+                return false
             }
         } != nil
         if done {
             return ("已打开系统设置，\(manual)", true)
         }
-        skillLogger.warning("openSystemSettings: 跳转系统设置超时，已跳过")
         return ("无法打开系统设置，\(manual)", false)
     }
 }
