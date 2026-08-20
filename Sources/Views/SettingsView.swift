@@ -195,11 +195,11 @@ struct SettingsView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
 
-                            // 语音 / AI / 随机生成规则
+                            // 文本输入 / AI / 随机生成规则
                             Button {
                                 showRuleGenerator = true
                             } label: {
-                                Label("语音生成规则", systemImage: "mic.fill")
+                                Label("文本生成规则", systemImage: "text.bubble")
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundColor(AppTheme.accentSoft)
                                     .frame(maxWidth: .infinity)
@@ -600,13 +600,12 @@ struct WorkflowStepCard: View {
     }
 }
 
-// MARK: - 语音 / AI / 随机生成「智能工具流程」规则
+// MARK: - 文本输入 / AI / 随机生成「智能工具流程」规则
 struct WorkflowRuleGeneratorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settingsVM: SettingsViewModel
 
     @State private var text = ""
-    @State private var isRecording = false
     @State private var isGenerating = false
     @State private var message: String?
     @State private var messageTint: Color = AppTheme.success
@@ -616,21 +615,19 @@ struct WorkflowRuleGeneratorSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
-                // 语音输入：点按开始 / 停止聆听
-                Button {
-                    toggleVoice()
-                } label: {
-                    Label(isRecording ? "正在聆听… 点按停止" : "点按说话，说出你想要什么规则",
-                          systemImage: isRecording ? "waveform" : "mic.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(AppTheme.userBubbleText)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(isRecording ? AppTheme.error : AppTheme.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                // 说明文字
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("描述你想要的规则")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppTheme.secondaryText)
+                    Text("例如：\"当用户想找附近好吃的餐厅时，先获取位置，再搜索美食推荐\"")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                // 识别文本（可手动修改）
+                // 文本输入框
                 TextEditor(text: $text)
                     .frame(minHeight: 120, maxHeight: 200)
                     .font(.system(size: 14))
@@ -643,7 +640,7 @@ struct WorkflowRuleGeneratorSheet: View {
                     )
                     .overlay(alignment: .topLeading) {
                         if text.isEmpty {
-                            Text("识别结果会出现在这里，也可手动修改…")
+                            Text("在这里输入你想要的规则描述…")
                                 .font(.system(size: 13))
                                 .foregroundColor(AppTheme.tertiaryText)
                                 .padding(.top, 8)
@@ -693,16 +690,6 @@ struct WorkflowRuleGeneratorSheet: View {
                     Button("完成") { dismiss() }
                 }
             }
-        }
-    }
-
-    private func toggleVoice() {
-        if isRecording {
-            let t = SpeechRecognizer.shared.stop()
-            if !t.isEmpty { text = t }
-            isRecording = false
-        } else {
-            isRecording = SpeechRecognizer.shared.start()
         }
     }
 
