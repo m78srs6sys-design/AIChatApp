@@ -54,43 +54,16 @@ extension View {
     }
 }
 
-/// 液态玻璃背景层：毛玻璃 + 光泽 + 描边 + 柔和投影，并带一道缓慢流动的高光扫光动画。
+/// 系统液态玻璃底板：仅使用 SwiftUI `Material`。
+/// 在 iOS 26+ 设备上，系统会把 Material 直接渲染成真正的 Liquid Glass（折射 / 高光 / 边缘由系统处理），
+/// 因此这里只负责提供形状与材质，不再手搓任何白色描边 / 扫光 / 高光（那是假效果）。
 struct LiquidGlassBackdrop: View {
     let radius: CGFloat
     let material: Material
-    @State private var sheen = false
 
     var body: some View {
         RoundedRectangle(cornerRadius: radius, style: .continuous)
             .fill(material)
-            .overlay(
-                // 顶部左高光 → 右下透明的光泽，营造玻璃厚度感
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(LinearGradient(
-                        colors: [Color.white.opacity(0.28), Color.white.opacity(0.06), Color.clear],
-                        startPoint: .topLeading, endPoint: .bottomTrailing))
-            )
-            .overlay(
-                // 缓慢扫过的高光，增强「液态」流动感
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(LinearGradient(
-                        colors: [Color.clear, Color.white.opacity(0.18), Color.clear],
-                        startPoint: .leading, endPoint: .trailing))
-                    .rotationEffect(.degrees(-18))
-                    .offset(x: sheen ? 80 : -80)
-                    .mask(RoundedRectangle(cornerRadius: radius, style: .continuous))
-                    .opacity(0.6)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(Color.white.opacity(0.30), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.20), radius: 12, x: 0, y: 6)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true)) {
-                    sheen.toggle()
-                }
-            }
     }
 }
 
@@ -112,29 +85,23 @@ extension View {
         }
     }
 
-    /// 圆形控件：开启液态玻璃时用毛玻璃圆 + 高光描边，否则回落到原实色圆。
-    /// 用在原本 `.background(Circle().fill(AppTheme.surface))` 的按钮上。
+    /// 圆形控件：开启液态玻璃时用系统毛玻璃圆（iOS 26 上即 Liquid Glass），否则回落原实色圆。
     @ViewBuilder
     func glassCircle(fallback: Color, enabled: Bool, line: Color = AppTheme.border.opacity(0.5)) -> some View {
         if enabled {
             self.background(Circle().fill(.regularMaterial))
-                .overlay(Circle().stroke(Color.white.opacity(0.30), lineWidth: 1))
-                .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
         } else {
             self.background(Circle().fill(fallback))
                 .overlay(Circle().stroke(line, lineWidth: 0.5))
         }
     }
 
-    /// 胶囊控件（如模式切换）：开启液态玻璃时用毛玻璃胶囊，否则回落原实色胶囊。
+    /// 胶囊控件（如模式切换）：开启液态玻璃时用系统毛玻璃胶囊，否则回落原实色胶囊。
     @ViewBuilder
     func glassifyCapsule(fallback: Color, enabled: Bool) -> some View {
         self.background {
             if enabled {
-                Capsule()
-                    .fill(.regularMaterial)
-                    .overlay(Capsule().stroke(Color.white.opacity(0.30), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
+                Capsule().fill(.regularMaterial)
             } else {
                 Capsule().fill(fallback)
             }
