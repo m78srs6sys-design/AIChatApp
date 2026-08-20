@@ -82,11 +82,11 @@ final class OnlineChatEngine {
             // 深度思考过程（兼容 DeepSeek 的 reasoning_content 与部分服务商的 reasoning）
             if let reasoning = (delta["reasoning_content"] as? String) ?? (delta["reasoning"] as? String),
                !reasoning.isEmpty {
-                onReasoning?(reasoning)
+                await MainActor.run { onReasoning?(reasoning) }
             }
             guard let content = delta["content"] as? String else { continue }
             if !content.isEmpty {
-                onToken(content)
+                await MainActor.run { onToken(content) }
             }
         }
     }
