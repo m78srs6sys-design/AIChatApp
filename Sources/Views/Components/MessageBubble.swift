@@ -6,6 +6,9 @@ import WebKit
 struct MessageBubble: View {
     let message: ChatMessage
     @EnvironmentObject private var chatVM: ChatViewModel
+    @EnvironmentObject private var settingsVM: SettingsViewModel
+    /// 朗读服务（单例，用于实时反映播放状态）
+    @ObservedObject private var speech = SpeechService.shared
 
     // 多选删除支持
     var isSelectionMode: Bool = false
@@ -16,6 +19,11 @@ struct MessageBubble: View {
     var onRegenerate: (() -> Void)? = nil
 
     @State private var showReasoning: Bool = false
+
+    /// 当前这条消息是否正在被朗读
+    private var isThisSpeaking: Bool {
+        speech.isSpeakingNow && speech.speakingText == message.content
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -47,6 +55,32 @@ struct MessageBubble: View {
                     }
                     bubbleContent
                     attachmentViews
+
+                    // 常驻朗读按钮（AI 消息）：一眼可见、点按即读，避免长按菜单「没反应」的误解
+                    if message.role == .assistant, !message.content.isEmpty {
+                        HStack(spacing: 6) {
+                            Button {
+                                if speech.isSpeakingNow {
+                                    speech.stop()
+                                } else {
+                                    speech.speak(message.content)
+                                }
+                            } label: {
+                                Image(systemName: isThisSpeaking ? "speaker.wave.2.fill" : "speaker.wave.2")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(isThisSpeaking ? AppTheme.accent : AppTheme.secondaryText)
+                                    .frame(width: 30, height: 30)
+                                    .background(Circle().fill(AppTheme.surfaceElevated.opacity(0.85)))
+                                    .overlay(Circle().stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
+                            }
+                            .buttonStyle(BounceButtonStyle())
+                            Text(isThisSpeaking ? "停止朗读" : "朗读内容")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(isThisSpeaking ? AppTheme.accent : AppTheme.secondaryText)
+                        }
+                        .padding(.top, 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
 
                 if message.role == .assistant {
@@ -158,7 +192,13 @@ struct MessageBubble: View {
                 .foregroundColor(AppTheme.userBubbleText)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
-                .background(AppTheme.userBubble)
+                .background {
+                    if settingsVM.settings.liquidGlassEnabled {
+                        LiquidGlassBackdrop(radius: AppTheme.bubbleRadius, material: .thinMaterial)
+                    } else {
+                        AppTheme.userBubble
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.bubbleRadius, style: .continuous))
                 .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
         } else {
@@ -202,18 +242,24 @@ struct MessageBubble: View {
                         .padding(.bottom, 14)
                 }
             }
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.bubbleRadius, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AppTheme.bubbleRadius, style: .continuous)
-                            .fill(AppTheme.aiBubble.opacity(0.85))
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.bubbleRadius, style: .continuous)
-                    .stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5)
-            )
+            .background {
+                if settingsVM.settings.liquidGlassEnabled {
+                    LiquidGlassBackdrop(radius: AppTheme.bubbleRadius, material: .regularMaterial)
+                } else {
+                    RoundedRectangle(cornerRadius: AppTheme.bubbleRadius, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AppTheme.bubbleRadius, style: .continuous)
+                                .fill(AppTheme.aiBubble.opacity(0.85))
+                        )
+                }
+            }
+            .overlay {
+                if !settingsVM.settings.liquidGlassEnabled {
+                    RoundedRectangle(cornerRadius: AppTheme.bubbleRadius, style: .continuous)
+                        .stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5)
+                }
+            }
         }
     }
 
