@@ -198,27 +198,30 @@ final class OnlineSkillService {
         throw lastError
     }
 
-    /// Pollinations.ai 免费图片生成兜底：返回可直接渲染的图片 URL。
+    /// Pollinations.ai 免费图片生成兜底：GET 等待生成完成后返回可渲染 URL。
+    /// 带 `wait=true` 会阻塞直到图片渲染完毕（约 5-15s），确保上层拿到即可显示。
     private func generateImagePollinations(prompt: String) async throws -> String {
         let sanitized = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "&", with: " and ")
             .replacingOccurrences(of: "?", with: "")
         guard let encoded = sanitized.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let url = URL(string: "https://image.pollinations.ai/prompt/\(encoded)?width=1024&height=1024&nologo=true&seed=\(Int.random(in: 1...999999))&enhance=true") else {
+              let url = URL(string: "https://image.pollinations.ai/prompt/\(encoded)?width=1024&height=1024&nologo=true&seed=\(Int.random(in: 1...999999))&enhance=true&wait=true") else {
             throw ChatError.requestFailed
         }
-        // 验证 URL 可达且能返回图片（HEAD 请求，超时 30s）
+        // GET 下载验证：wait=true 会等服务端生成完，返回 2xx 且是图片才视为成功
         var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
-        request.timeoutInterval = 30
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        request.httpMethod = "GET"
+        request.timeoutInterval = 60
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              !data.isEmpty,
+              let mime = http.mimeType, mime.hasPrefix("image") else {
             throw ChatError.requestFailed
         }
         return url.absoluteString
     }
 
-    /// 单个端点的图片生成请求
+    /// 单个端点的图片生成请求（12s 短超时：失败快速切换下一端点/免费兜底）
     private func performImageGeneration(endpoint: String, prompt: String, apiKey: String) async throws -> String {
         let body: [String: Any] = [
             "prompt": prompt,
@@ -228,6 +231,7 @@ final class OnlineSkillService {
         guard let url = URL(string: endpoint) else { throw ChatError.requestFailed }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 12
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !apiKey.isEmpty {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -526,61 +530,69 @@ final class OnlineSkillService {
 
     // MARK: - 系统 API 操作（亮度/音量/手电筒/设置跳转等）
     /// 执行系统级操作。返回 (操作描述, 是否成功)。
-    /// 能直接生效的会立即执行（亮度、音量、手电筒），受限项（Wi-Fi/蓝牙/低电量）会跳对应设置页。
+    /// 智能匹配中文口语（如"调节屏幕亮度到50%"）与英文命令（brightness 0.5）。
     func executeSystemAction(command: String) async -> (description: String, success: Bool) {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let cmd = trimmed.lowercased()
 
-        // 亮度调节（UIScreen 直接生效，无需权限）
-        if cmd.hasPrefix("brightness") || cmd.hasPrefix("亮度") {
+        // 亮度（英文或中文包含"亮度"）
+        if cmd.hasPrefix("brightness") || cmd.contains("亮度") {
             return await setBrightness(trimmed)
         }
-
-        // 音量调节（MPVolumeView，直接生效）
-        if cmd.hasPrefix("volume") || cmd.hasPrefix("音量") {
+        // 音量（英文或中文包含"音量"）
+        if cmd.hasPrefix("volume") || cmd.contains("音量") {
             return await setVolume(trimmed)
         }
-
-        // 手电筒 / 闪光灯（AVCaptureDevice，直接生效）
-        if cmd.hasPrefix("torch") || cmd.hasPrefix("手电筒") || cmd.hasPrefix("闪光灯") {
+        // 手电筒 / 闪光灯
+        if cmd.hasPrefix("torch") || cmd.contains("手电筒") || cmd.contains("闪光灯") || cmd.contains("电筒") {
             return await toggleTorch(trimmed)
         }
-
         // 低电量 / 省电（只能跳设置）
-        if cmd == "low_power" || cmd == "低电量" || cmd == "省电" {
+        if cmd == "low_power" || cmd.contains("低电量") || cmd.contains("省电") || cmd.contains("低功耗") {
             return await openSystemSettings(path: "BATTERY_USAGE", manual: "请手动开启低电量模式")
         }
-
-        // Wi-Fi 设置
-        if cmd == "wifi" || cmd == "无线" || cmd == "无线网络" {
+        // Wi-Fi
+        if cmd == "wifi" || cmd == "无线" || cmd == "无线网络" || cmd.contains("wifi") || (cmd.contains("无线") && cmd.contains("开")) {
             return await openSystemSettings(path: "WIFI", manual: "请手动连接或开关 Wi-Fi")
         }
-
-        // 蓝牙设置
-        if cmd == "bluetooth" || cmd == "蓝牙" {
+        // 蓝牙
+        if cmd == "bluetooth" || cmd.contains("蓝牙") {
             return await openSystemSettings(path: "Bluetooth", manual: "请手动连接或开关蓝牙")
         }
-
-        // 显示与亮度
-        if cmd == "display" || cmd == "显示" || cmd == "屏幕" || cmd == "显示与亮度" {
+        // 显示与亮度设置
+        if cmd.contains("显示") || cmd.contains("屏幕") {
             return await openSystemSettings(path: "DISPLAY", manual: "请手动调节显示设置")
         }
-
-        // 声音与触感
-        if cmd == "sound" || cmd == "声音" || cmd == "声音与触感" {
+        // 声音设置
+        if cmd.contains("声音") || cmd.contains("铃声") {
             return await openSystemSettings(path: "Sounds", manual: "请手动调节铃声与提醒")
         }
+        return ("未知系统操作「\(command)」。支持：亮度 50%、音量 50%、手电筒开/关、低电量、wifi、蓝牙、显示、声音", false)
+    }
 
-        return ("未知系统操作「\(command)」。支持的命令：brightness 0.5、volume 0.5、torch on/off、低电量、wifi、蓝牙、显示、声音", false)
+    /// 从命令中提取数值：支持 "50"、"50%"、"0.5"、"50 %" 等
+    private static func extractValue(_ cmd: String) -> Double? {
+        // 数字后跟 % 视为百分比；否则 0~1 视为比例
+        let pattern = #"(\d+(?:\.\d+)?)\s*%?"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let m = regex.firstMatch(in: cmd, range: NSRange(cmd.startIndex..., in: cmd)),
+              let r = Range(m.range(at: 1), in: cmd),
+              let val = Double(cmd[r]) else { return nil }
+        // 若数字后紧跟 %，说明是百分比
+        let after = m.range(at: 1).upperBound
+        let ns = cmd as NSString
+        if after < ns.length, ns.substring(from: after).hasPrefix("%") {
+            return val
+        }
+        return val > 1 ? val / 100.0 : val
     }
 
     // MARK: - 具体系统能力
 
     private func setBrightness(_ cmd: String) async -> (description: String, success: Bool) {
-        let parts = cmd.components(separatedBy: .whitespaces)
         let level: Double
-        if parts.count >= 2, let val = Double(parts.last!.trimmingCharacters(in: CharacterSet(charactersIn: "%"))) {
-            level = min(1.0, max(0.0, val > 1 ? val / 100.0 : val))
+        if let v = Self.extractValue(cmd) {
+            level = min(1.0, max(0.0, v))
         } else {
             level = 0.5
         }
@@ -594,19 +606,25 @@ final class OnlineSkillService {
     }
 
     private func setVolume(_ cmd: String) async -> (description: String, success: Bool) {
-        let parts = cmd.components(separatedBy: .whitespaces)
         let level: Float
-        if parts.count >= 2, let val = Double(parts.last!.trimmingCharacters(in: CharacterSet(charactersIn: "%"))) {
-            level = Float(min(1.0, max(0.0, val > 1 ? val / 100.0 : val)))
+        if let v = Self.extractValue(cmd) {
+            level = Float(min(1.0, max(0.0, v)))
         } else {
             level = 0.5
         }
         let done = await withTimeout(5) {
             await MainActor.run {
-                let volumeView = MPVolumeView()
-                if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                // MPVolumeView 需真实挂到窗口层级才能驱动系统音量，完成后立即移除
+                let volumeView = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 1, height: 1))
+                volumeView.isHidden = true
+                if let window = UIApplication.shared.connectedScenes
+                    .compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first {
+                    window.addSubview(volumeView)
+                    if let slider = volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
                         slider.value = level
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        volumeView.removeFromSuperview()
                     }
                 }
             }
@@ -618,7 +636,8 @@ final class OnlineSkillService {
     }
 
     private func toggleTorch(_ cmd: String) async -> (description: String, success: Bool) {
-        let on = cmd.contains("on") || cmd.contains("开") || cmd == "torch" || cmd == "手电筒" || cmd == "闪光灯"
+        let off = cmd.contains("off") || cmd.contains("关") || cmd.contains("关闭")
+        let on = !off && (cmd.contains("on") || cmd.contains("开") || cmd.contains("手电筒") || cmd.contains("闪光灯") || cmd.contains("torch"))
         let done = await withTimeout(5) {
             await MainActor.run {
                 guard let device = AVCaptureDevice.default(for: .video), device.hasTorch else { return false }
