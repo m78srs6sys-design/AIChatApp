@@ -147,35 +147,42 @@ enum APIPreset: String, CaseIterable, Identifiable {
     }
 }
 
-/// 本地模型清单（下载源使用国内可访问的 HuggingFace 镜像 hf-mirror.com）
+/// 本地模型清单（下载源：魔搭 ModelScope 国内 CDN，速度快；分片自动合并加载）
 enum LocalModelCatalog {
     static let models: [LocalModel] = [
         LocalModel(
             id: "qwen2.5-1.5b-instruct",
             name: "Qwen2.5-1.5B-Instruct",
             detail: "通义千问 2.5 指令微调 · 轻量快速",
-            sizeText: "约 1.1 GB",
-            downloadURL: "https://hf-mirror.com/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+            sizeText: "约 1.04 GB",
+            downloadURL: "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q4_k_m.gguf",
             filename: "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-            contextLength: 4096
+            contextLength: 4096,
+            parts: [
+                LocalModelPart(filename: "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                               downloadURL: "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                               size: 1117320736)
+            ]
         ),
         LocalModel(
             id: "qwen2.5-7b-instruct",
             name: "Qwen2.5-7B-Instruct",
             detail: "通义千问 2.5 · 7B 更大更强（分片模型，自动合并）",
-            sizeText: "约 4.7 GB",
+            sizeText: "约 4.36 GB",
             // 官方 GGUF 仓库中 q4_k_m 拆分为两个分片，须逐个下载后由 llama.cpp 自动合并
-            downloadURL: "https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+            downloadURL: "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
             filename: "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
             contextLength: 8192,
             parts: [
                 LocalModelPart(
                     filename: "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
-                    downloadURL: "https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
+                    downloadURL: "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+                    size: 3993201344
                 ),
                 LocalModelPart(
                     filename: "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
-                    downloadURL: "https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
+                    downloadURL: "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+                    size: 689872288
                 )
             ]
         )
