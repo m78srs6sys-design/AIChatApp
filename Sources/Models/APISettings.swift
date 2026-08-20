@@ -157,11 +157,22 @@ enum LocalModelCatalog {
         LocalModel(
             id: "qwen2.5-7b-instruct",
             name: "Qwen2.5-7B-Instruct",
-            detail: "通义千问 2.5 · 7B 更大更强",
+            detail: "通义千问 2.5 · 7B 更大更强（分片模型，自动合并）",
             sizeText: "约 4.7 GB",
-            downloadURL: "https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
-            filename: "qwen2.5-7b-instruct-q4_k_m.gguf",
-            contextLength: 8192
+            // 官方 GGUF 仓库中 q4_k_m 拆分为两个分片，须逐个下载后由 llama.cpp 自动合并
+            downloadURL: "https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+            filename: "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+            contextLength: 8192,
+            parts: [
+                LocalModelPart(
+                    filename: "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+                    downloadURL: "https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
+                ),
+                LocalModelPart(
+                    filename: "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+                    downloadURL: "https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
+                )
+            ]
         )
     ]
 
