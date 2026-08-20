@@ -169,12 +169,8 @@ final class LocalInferenceEngine {
             // 转回文本（字节安全：用 UTF8 解码而非 cString，防止多字节边界截断乱码）
             let pieceLen = llama_token_to_piece(vocab, newId, &buf, Int32(buf.count), 0, true)
             if pieceLen > 0 {
-                let piece = buf.withUnsafeBufferPointer { raw in
-                    String(decoding: UnsafeBufferPointer(
-                        start: raw.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                        count: Int(pieceLen)), as: UTF8.self)
-                }
-                pending += piece
+                let bytes = buf[0..<Int(pieceLen)].map { UInt8(bitPattern: $0) }
+                pending += String(decoding: bytes, as: UTF8.self)
             }
 
             // 继续解码
