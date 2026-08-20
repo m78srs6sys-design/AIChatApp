@@ -194,7 +194,7 @@ struct MessageBubble: View {
                 .padding(.vertical, 12)
                 .background {
                     if settingsVM.settings.liquidGlassEnabled {
-                        LiquidGlassBackdrop(radius: AppTheme.bubbleRadius, material: .thinMaterial)
+                        AppTheme.userBubble
                     } else {
                         AppTheme.userBubble
                     }
@@ -244,7 +244,12 @@ struct MessageBubble: View {
             }
             .background {
                 if settingsVM.settings.liquidGlassEnabled {
-                    LiquidGlassBackdrop(radius: AppTheme.bubbleRadius, material: .regularMaterial)
+                    RoundedRectangle(cornerRadius: AppTheme.bubbleRadius, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AppTheme.bubbleRadius, style: .continuous)
+                                .fill(AppTheme.aiBubble.opacity(0.85))
+                        )
                 } else {
                     RoundedRectangle(cornerRadius: AppTheme.bubbleRadius, style: .continuous)
                         .fill(.ultraThinMaterial)
