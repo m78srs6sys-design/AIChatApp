@@ -2,13 +2,13 @@ import Foundation
 import UIKit
 import PDFKit
 
-/// 将对话记录导出为格式化 PDF 文件。
-/// 支持附件：图片（预下载后按比例绘制）、天气 / 搜索结果 / 定位 / 网页 / HTML 卡片 / 系统操作（文本化卡片）。
+/// 将对话记录导出为与 App UI 风格一致的 PDF 文件。
+/// 支持附件：图片（预下载后按比例绘制）、天气 / 搜索结果 / 定位 / 网页 / HTML 卡片 / 系统操作。
 enum PDFExporter {
 
     /// 导出对话为 PDF（含附件）。
     /// 图片附件在渲染前异步预下载；下载失败时以占位文本代替，不影响导出。
-    static func export(messages: [ChatMessage]) async throws -> URL {
+    static func export(messages: [ChatMessage], progress: ((Double) -> Void)? = nil) async throws -> URL {
         // 1. 预下载所有图片附件
         var imageCache: [String: UIImage] = [:]
         let imageURLs = messages.flatMap { msg -> [String] in
@@ -17,12 +17,14 @@ enum PDFExporter {
                 return nil
             }
         }
-        for urlStr in imageURLs {
+        let totalImages = imageURLs.count
+        for (idx, urlStr) in imageURLs.enumerated() {
             guard imageCache[urlStr] == nil, let url = URL(string: urlStr) else { continue }
             if let (data, _) = try? await URLSession.shared.data(from: url),
                let img = UIImage(data: data) {
                 imageCache[urlStr] = img
             }
+            progress?(0.1 + 0.2 * Double(idx + 1) / Double(max(totalImages, 1)))
         }
 
         // 2. 渲染 PDF
@@ -35,62 +37,73 @@ enum PDFExporter {
         try renderer.writePDF(to: tempURL) { ctx in
             let margin: CGFloat = 44
             let maxWidth = pageRect.width - margin * 2
+            let bubbleMaxWidth = maxWidth * 0.82
             var y: CGFloat = margin
 
+            func fillBackground() {
+                Self.pageBgColor.setFill()
+                UIRectFill(pageRect)
+            }
             func ensureSpace(_ needed: CGFloat) {
                 if y + needed > pageRect.height - margin {
                     ctx.beginPage()
+                    fillBackground()
                     y = margin
                 }
             }
 
-            // 标题
-            ensureSpace(40)
-            "AI 对话记录".draw(in: CGRect(x: margin, y: y, width: maxWidth, height: 30),
-                             withAttributes: Self.titleAttrs)
-            y += 38
+            fillBackground()
+
+            // 标题（与 App 主题色一致）
+            ensureSpace(44)
+            let title = "AI 对话记录"
+            title.draw(in: CGRect(x: margin, y: y, width: maxWidth, height: 30),
+                       withAttributes: Self.titleAttrs)
+            y += 36
             let sub = "共 \(messages.count) 条消息 · 导出时间 \(Date().formatted(date: .abbreviated, time: .standard))"
-            sub.draw(in: CGRect(x: margin, y: y, width: maxWidth, height: 16),
+            sub.draw(in: CGRect(x: margin, y: y, width: maxWidth, height: 14),
                      withAttributes: Self.subtitleAttrs)
-            y += 26
+            y += 28
 
             let df = DateFormatter()
             df.dateFormat = "yyyy-MM-dd HH:mm"
 
             for (i, msg) in messages.enumerated() {
-                // 分隔线
-                if i > 0 {
-                    ensureSpace(20)
-                    let line = UIBezierPath()
-                    line.move(to: CGPoint(x: margin, y: y))
-                    line.addLine(to: CGPoint(x: pageRect.width - margin, y: y))
-                    line.lineWidth = 0.5
-                    UIColor(white: 0.6, alpha: 0.35).setStroke()
-                    line.stroke()
-                    y += 14
-                }
-
-                // 角色 + 时间
+                progress?(0.3 + 0.7 * Double(i) / Double(messages.count))
                 let isUser = msg.role == .user
-                let header = "\(isUser ? "我" : "AI")  ·  \(df.string(from: msg.timestamp))"
-                ensureSpace(22)
-                header.draw(in: CGRect(x: margin, y: y, width: maxWidth, height: 18),
-                            withAttributes: isUser ? Self.userHeaderAttrs : Self.aiHeaderAttrs)
-                y += 24
 
-                // 正文（自动换行）
+                // 角色 + 时间 小标签
+                ensureSpace(20)
+                let header = "\(isUser ? "我" : "AI")  ·  \(df.string(from: msg.timestamp))"
+                let headerSize = (header as NSString).boundingRect(
+                    with: CGSize(width: bubbleMaxWidth, height: .greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                    attributes: Self.headerAttrs, context: nil)
+                let headerX: CGFloat = isUser ? pageRect.width - margin - headerSize.width : margin
+                header.draw(in: CGRect(x: headerX, y: y, width: headerSize.width, height: headerSize.height),
+                            withAttributes: Self.headerAttrs)
+                y += headerSize.height + 6
+
+                // 正文气泡
                 let content = msg.content.isEmpty ? "（无文字内容）" : msg.content
                 let bodySize = (content as NSString).boundingRect(
-                    with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
+                    with: CGSize(width: bubbleMaxWidth - 28, height: .greatestFiniteMagnitude),
                     options: [.usesLineFragmentOrigin, .usesFontLeading],
-                    attributes: Self.bodyAttrs, context: nil)
-                ensureSpace(bodySize.height + 4)
-                (content as NSString).draw(
-                    in: CGRect(x: margin, y: y, width: maxWidth, height: bodySize.height),
-                    withAttributes: Self.bodyAttrs)
-                y += bodySize.height + 10
+                    attributes: isUser ? Self.userBodyAttrs : Self.aiBodyAttrs, context: nil)
+                let bubbleHeight = bodySize.height + 20
+                ensureSpace(bubbleHeight + 10)
+                let bubbleX: CGFloat = isUser ? pageRect.width - margin - bodySize.width - 28 : margin
+                let bubbleRect = CGRect(x: bubbleX, y: y, width: bodySize.width + 28, height: bubbleHeight)
+                let bubblePath = UIBezierPath(roundedRect: bubbleRect,
+                                              cornerRadius: 16,
+                                              byRoundingCorners: isUser ? [.topLeft, .topRight, .bottomLeft] : [.topLeft, .topRight, .bottomRight])
+                (isUser ? Self.userBubbleColor : Self.aiBubbleColor).setFill()
+                bubblePath.fill()
+                content.draw(in: CGRect(x: bubbleX + 14, y: y + 10, width: bodySize.width, height: bodySize.height),
+                             withAttributes: isUser ? Self.userBodyAttrs : Self.aiBodyAttrs)
+                y += bubbleHeight + 12
 
-                // 附件
+                // 附件卡片（App 卡片样式）
                 for att in msg.attachments {
                     let result = Self.drawAttachment(att,
                                                      atY: y,
@@ -101,6 +114,7 @@ enum PDFExporter {
                     y = result
                 }
             }
+            progress?(1.0)
         }
         return tempURL
     }
@@ -262,38 +276,46 @@ enum PDFExporter {
         return String(s.prefix(600))
     }
 
-    // MARK: - 字体样式
+    // MARK: - 字体样式（匹配 App 深色主题）
+
+    private static let pageBgColor = UIColor(red: 0.08, green: 0.07, blue: 0.12, alpha: 1)
+    private static let userBubbleColor = UIColor(red: 0.20, green: 0.42, blue: 1.00, alpha: 0.95)
+    private static let aiBubbleColor = UIColor(red: 0.12, green: 0.11, blue: 0.18, alpha: 1)
+    private static let accentColor = UIC(red: 1.00, green: 0.63, blue: 0.42, alpha: 1)
+    private static let primaryText = UIColor(white: 0.92, alpha: 1)
+    private static let secondaryText = UIColor(white: 0.55, alpha: 1)
+    private static let cardBgColor = UIC(red: 0.15, green: 0.14, blue: 0.22, alpha: 1)
 
     private static let titleAttrs: [NSAttributedString.Key: Any] = [
         .font: UIFont.boldSystemFont(ofSize: 20),
-        .foregroundColor: UIColor(red: 0.85, green: 0.45, blue: 0.2, alpha: 1)
+        .foregroundColor: accentColor
     ]
     private static let subtitleAttrs: [NSAttributedString.Key: Any] = [
         .font: UIFont.systemFont(ofSize: 11),
-        .foregroundColor: UIColor.lightGray
+        .foregroundColor: secondaryText
     ]
-    private static let userHeaderAttrs: [NSAttributedString.Key: Any] = [
-        .font: UIFont.boldSystemFont(ofSize: 13),
-        .foregroundColor: UIColor.systemBlue
+    private static let headerAttrs: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(ofSize: 10),
+        .foregroundColor: secondaryText
     ]
-    private static let aiHeaderAttrs: [NSAttributedString.Key: Any] = [
-        .font: UIFont.boldSystemFont(ofSize: 13),
-        .foregroundColor: UIColor(red: 0.85, green: 0.45, blue: 0.2, alpha: 1)
-    ]
-    private static let bodyAttrs: [NSAttributedString.Key: Any] = [
+    private static let userBodyAttrs: [NSAttributedString.Key: Any] = [
         .font: UIFont.systemFont(ofSize: 13),
-        .foregroundColor: UIColor.black
+        .foregroundColor: UIColor.white
+    ]
+    private static let aiBodyAttrs: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(ofSize: 13),
+        .foregroundColor: primaryText
     ]
     private static let attachLabelAttrs: [NSAttributedString.Key: Any] = [
         .font: UIFont.boldSystemFont(ofSize: 12),
-        .foregroundColor: UIColor.darkGray
+        .foregroundColor: accentColor
     ]
     private static let attachSubAttrs: [NSAttributedString.Key: Any] = [
         .font: UIFont.systemFont(ofSize: 11),
-        .foregroundColor: UIColor(white: 0.25, alpha: 1)
+        .foregroundColor: primaryText
     ]
     private static let attachSnippetAttrs: [NSAttributedString.Key: Any] = [
         .font: UIFont.systemFont(ofSize: 10),
-        .foregroundColor: UIColor.lightGray
+        .foregroundColor: secondaryText
     ]
 }
