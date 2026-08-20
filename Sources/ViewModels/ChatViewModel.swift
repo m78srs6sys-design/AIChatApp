@@ -120,9 +120,10 @@ final class ChatViewModel: ObservableObject {
             return
         }
 
-        // 系统提示：所有附加功能仅当联网附加开启时可用
+        // 系统提示：工具/卡片等「相关功能」需同时开启 深度思考 + 联网附加 才可用
+        // （缺少任一条件 → 不注入工具提示词 → AI 直接回答，不调用任何工具）
         var systemPrompt: String? = nil
-        if settings.onlineFeaturesEnabled {
+        if settings.onlineFeaturesEnabled && settings.deepThinking {
             var sp = """
             你是一个会主动使用工具的智能助手。你可以调用下面列出的「工具标签」来获取信息或执行操作。
 
@@ -139,10 +140,15 @@ final class ChatViewModel: ObservableObject {
               <web>网页URL</web>
               <image>英文画面描述</image>
               <imageSearch>查询词</imageSearch>
-              <card>完整HTML代码</card>
+              <card>卡片内容描述（只写要点或数据，不要自己写 HTML 代码；系统会交给另一个 AI 把它渲染成美观卡片）</card>
               <system>命令</system>
                 <system> 的命令只能是以下之一（数字可写 50 表示 50%，也可写 0.5）：
                 brightness 50 / volume 50 / torch on / torch off / 低电量 / wifi / 蓝牙 / 显示 / 声音
+
+            【可视化卡片 <card>】
+            - 位置 / 天气 / 网页 / 搜索 / 图片 / 系统操作 已有专属展示卡片，不要用 <card> 重复生成相同内容（否则会出现两张卡，很奇怪）。
+            - 仅在需要展示其它自定义结构化信息时（如对比、清单、步骤、表格、时间线、数据汇总）才使用 <card>；并尽量在更多场景主动展示，提升可读性。
+            - <card> 内只写内容描述 / 要点 / 数据，绝对不要写 HTML 代码（HTML 由系统交给另一个 AI 生成）。
 
             【工作流程】
             1) 先在脑中判断用户真正需要什么信息。
@@ -169,6 +175,8 @@ final class ChatViewModel: ObservableObject {
         let maxIter = 6
         // 已调用过的工具缓存（防止无限循环，同一工具+同内容只执行一次）
         var calledTools = Set<String>()
+        // 本轮已用「专属卡片」展示过的工具内容（防止 <card> 重复生成同一张卡）
+        var coveredTexts: [String] = []
 
         do {
             while iteration < maxIter {
@@ -189,13 +197,13 @@ final class ChatViewModel: ObservableObject {
                         // 始终过滤标签，确保用户看不到任何标签内容
                         self.setDisplay(to: aiId, cleaned: Self.stripCallTags(raw))
                     },
-                    onReasoning: { [weak self] token in
+                    onReasoning: settings.deepThinking ? { [weak self] token in
                         self?.appendReasoning(to: aiId, token: token)
-                    }
+                    } : nil
                 )
 
                 let calls = Self.extractCalls(raw)
-                if calls.isEmpty || !settings.onlineFeaturesEnabled {
+                if calls.isEmpty || !settings.onlineFeaturesEnabled || !settings.deepThinking {
                     finalText = Self.stripCallTags(raw)
                     break
                 }
@@ -209,11 +217,26 @@ final class ChatViewModel: ObservableObject {
                             content: "[工具结果：\(Self.toolLabel(kind))] 已执行过，无需重复调用。"))
                         continue
                     }
+                    // 防重复卡片：该内容已由专属卡片（位置/天气/网页/搜索/系统操作）展示，跳过 <card> 避免出现两张卡
+                    if kind == "card" {
+                        let plain = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if coveredTexts.contains(where: {
+                            plain.localizedCaseInsensitiveContains($0) || $0.localizedCaseInsensitiveContains(plain)
+                        }) {
+                            toolTurns.append(ChatMessage(role: .user,
+                                content: "[工具结果：可视化卡片] 该内容已由专属卡片展示，跳过重复卡片。"))
+                            continue
+                        }
+                    }
                     calledTools.insert(callKey)
                     let label = Self.toolLabel(kind)
                     statusMessage = "正在调用工具：\(label)…"
                     let (att, resultText) = await executeCallWithResult(kind: kind, content: content, settings: settings)
                     attachments.append(contentsOf: att)
+                    // 记录已用专属卡片展示过的工具内容（供后续 <card> 防重复）
+                    if ["search", "weather", "web", "location", "system"].contains(kind) {
+                        coveredTexts.append(content)
+                    }
                     toolTurns.append(ChatMessage(role: .user,
                         content: "[工具结果：\(label)]\n\(resultText)"))
                 }
@@ -445,12 +468,14 @@ final class ChatViewModel: ObservableObject {
             return ([], "无法获取定位（未授权或定位失败）。如需天气 / 周边信息，请直接告诉我城市名。")
 
         case "card":
-            // HTML 卡片：清洗 markdown 代码块标记后直接作为附件渲染
-            var cardHTML = content
-            cardHTML = cardHTML.replacingOccurrences(of: "```[a-zA-Z]*", with: "", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let card = MessageAttachment.htmlCard(html: cardHTML)
-            return ([card], "[HTML 卡片已生成]")
+            // 对话主 AI 只提供「内容描述」，由另一个 AI 独立生成 HTML，避免主 AI 直接输出代码污染回复
+            let spec = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let html = await generateCardHTML(spec: spec, settings: settings) {
+                return ([.htmlCard(html: html)], "[可视化卡片已生成]")
+            }
+            // 兜底：独立 AI 失败时用描述文本作为简单卡片内容
+            let fallbackHTML = "<div style='padding:14px;border-radius:16px;background:rgba(255,255,255,.08);color:#eaeaea;font-size:14px;line-height:1.6'>\(spec)</div>"
+            return ([.htmlCard(html: fallbackHTML)], "[可视化卡片已生成]")
 
         case "system":
             let (desc, _) = await skillService.executeSystemAction(command: content)
@@ -460,6 +485,44 @@ final class ChatViewModel: ObservableObject {
         default:
             return ([], "")
         }
+    }
+
+    /// 用「另一个 AI」根据内容描述生成 HTML 卡片代码。
+    /// 独立发起一次请求（同一接口，专用系统提示），只输出 HTML，与对话主 AI 完全分离。
+    private func generateCardHTML(spec: String, settings: APISettings) async -> String? {
+        let sys = """
+        你是一个严格的 HTML 卡片生成器。用户会给你一段内容描述或数据，你只输出一段自包含的 HTML 代码（根节点为单个 <div>）。
+        要求：
+        - 只输出 HTML 本身，不要任何解释、不要 Markdown 代码块、不要任何工具标签；
+        - 适配深色背景：根 <div> 用半透明深色底 + 圆角 + 内边距 + 简洁描边；
+        - 中文内容，排版清晰，可用简单表格 / 列表 / 标签 / 图标展示结构化信息；
+        - 纯 HTML + 内联 style，不引用外部图片、脚本或样式表。
+        """
+        var html = ""
+        do {
+            try await onlineEngine.streamChat(
+                messages: [
+                    ChatMessage(role: .system, content: sys),
+                    ChatMessage(role: .user, content: "请生成卡片：\n\(spec)")
+                ],
+                settings: settings,
+                onToken: { html += $0 },
+                onReasoning: nil
+            )
+        } catch {
+            return nil
+        }
+        var out = html
+            .replacingOccurrences(of: "```[a-zA-Z]*", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if out.hasPrefix("<html") || out.hasPrefix("<!DOCTYPE") {
+            // 极简清洗：只保留 <body> 内部内容作为卡片片段
+            if let bodyRange = out.range(of: "<body[^>]*>(.*?)</body>", options: .regularExpression) {
+                out = String(out[bodyRange]).replacingOccurrences(of: "<body[^>]*>|</body>", with: "", options: .regularExpression)
+            }
+        }
+        return out.isEmpty ? nil : out
     }
 
     private static func toolLabel(_ kind: String) -> String {
