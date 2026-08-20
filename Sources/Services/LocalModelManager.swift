@@ -436,6 +436,7 @@ extension LocalModelManager: URLSessionDownloadDelegate {
             self.finishBackgroundIfIdle()
         }
     }
+}
 
 struct DownloadState {
     var downloaded: Bool
