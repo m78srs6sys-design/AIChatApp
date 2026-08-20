@@ -68,11 +68,7 @@ struct ChatView: View {
                         .foregroundColor(AppTheme.primaryText)
                 }
                 .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(AppTheme.surfaceElevated)
-                        .shadow(color: .black.opacity(0.25), radius: 16, x: 0, y: 8)
-                )
+                .glassify(fallback: AppTheme.surfaceElevated, radius: 16, enabled: settingsVM.settings.liquidGlassEnabled)
                 .transition(.scale(scale: 0.9).combined(with: .opacity))
             }
         }
@@ -107,7 +103,7 @@ struct ChatView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(AppTheme.secondaryText)
                     .frame(width: 38, height: 38)
-                    .background(Circle().fill(AppTheme.surface))
+                    .glassCircle(fallback: AppTheme.surface, enabled: settingsVM.settings.liquidGlassEnabled)
             }
             .buttonStyle(BounceButtonStyle())
 
@@ -143,7 +139,7 @@ struct ChatView: View {
                     .font(.system(size: 16))
                     .foregroundColor(AppTheme.secondaryText)
                     .frame(width: 38, height: 38)
-                    .background(Circle().fill(AppTheme.surface))
+                    .glassCircle(fallback: AppTheme.surface, enabled: settingsVM.settings.liquidGlassEnabled)
             }
             .disabled(isExportingPDF)
             .buttonStyle(BounceButtonStyle())
@@ -156,7 +152,7 @@ struct ChatView: View {
                     .font(.system(size: 15))
                     .foregroundColor(AppTheme.secondaryText)
                     .frame(width: 38, height: 38)
-                    .background(Circle().fill(AppTheme.surface))
+                    .glassCircle(fallback: AppTheme.surface, enabled: settingsVM.settings.liquidGlassEnabled)
             }
             .buttonStyle(BounceButtonStyle())
 
@@ -166,7 +162,7 @@ struct ChatView: View {
                     .font(.system(size: 16))
                     .foregroundColor(AppTheme.secondaryText)
                     .frame(width: 38, height: 38)
-                    .background(Circle().fill(AppTheme.surface))
+                    .glassCircle(fallback: AppTheme.surface, enabled: settingsVM.settings.liquidGlassEnabled)
             }
             .buttonStyle(BounceButtonStyle())
         }
@@ -257,7 +253,7 @@ struct ChatView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(AppTheme.surface.opacity(0.6))
+        .glassify(fallback: AppTheme.surface.opacity(0.6), radius: 12, enabled: settingsVM.settings.liquidGlassEnabled)
     }
 
     // MARK: - Deep Thinking + 联网附加开关
@@ -280,9 +276,8 @@ struct ChatView: View {
                 .foregroundColor(settingsVM.settings.deepThinking ? AppTheme.accent : AppTheme.secondaryText)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(settingsVM.settings.deepThinking ? AppTheme.accent.opacity(0.16) : AppTheme.surface)
+                .glassify(fallback: (settingsVM.settings.deepThinking ? AppTheme.accent.opacity(0.16) : AppTheme.surface), radius: 999, enabled: settingsVM.settings.liquidGlassEnabled)
                 .clipShape(Capsule())
-                .overlay(Capsule().stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
             }
             .buttonStyle(BounceButtonStyle())
 
@@ -301,9 +296,8 @@ struct ChatView: View {
                 .foregroundColor(settingsVM.settings.onlineFeaturesEnabled ? AppTheme.accent : AppTheme.secondaryText)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(settingsVM.settings.onlineFeaturesEnabled ? AppTheme.accent.opacity(0.16) : AppTheme.surface)
+                .glassify(fallback: (settingsVM.settings.onlineFeaturesEnabled ? AppTheme.accent.opacity(0.16) : AppTheme.surface), radius: 999, enabled: settingsVM.settings.liquidGlassEnabled)
                 .clipShape(Capsule())
-                .overlay(Capsule().stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5))
                 .opacity(settingsVM.settings.deepThinking ? 1.0 : 0.5)
             }
             .buttonStyle(BounceButtonStyle())
@@ -353,7 +347,7 @@ struct ChatView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(AppTheme.surface.opacity(0.9))
+        .glassify(fallback: AppTheme.surface.opacity(0.9), radius: 14, enabled: settingsVM.settings.liquidGlassEnabled)
     }
 
     // MARK: - 多选逻辑
