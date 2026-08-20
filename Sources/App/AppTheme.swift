@@ -39,3 +39,57 @@ enum AppTheme {
     static let cardRadius: CGFloat = 24
     static let chipRadius: CGFloat = 999
 }
+
+// MARK: - 液态玻璃（Liquid Glass）质感
+/// 通过毛玻璃材质 + 顶部高光渐变 + 高光描边 + 投影，模拟液态玻璃观感。
+/// enabled=false 时整体不生效，保持原有样式（默认关闭，由设置项控制）。
+extension View {
+    @ViewBuilder
+    func liquidGlass(enabled: Bool, radius: CGFloat = 18, material: Material = .ultraThinMaterial) -> some View {
+        if enabled {
+            self.background(LiquidGlassBackdrop(radius: radius, material: material))
+        } else {
+            self
+        }
+    }
+}
+
+/// 液态玻璃背景层：毛玻璃 + 光泽 + 描边 + 柔和投影，并带一道缓慢流动的高光扫光动画。
+struct LiquidGlassBackdrop: View {
+    let radius: CGFloat
+    let material: Material
+    @State private var sheen = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .fill(material)
+            .overlay(
+                // 顶部左高光 → 右下透明的光泽，营造玻璃厚度感
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [Color.white.opacity(0.28), Color.white.opacity(0.06), Color.clear],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
+            )
+            .overlay(
+                // 缓慢扫过的高光，增强「液态」流动感
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [Color.clear, Color.white.opacity(0.18), Color.clear],
+                        startPoint: .leading, endPoint: .trailing))
+                    .rotationEffect(.degrees(-18))
+                    .offset(x: sheen ? 80 : -80)
+                    .mask(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    .opacity(0.6)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .stroke(Color.white.opacity(0.30), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.20), radius: 12, x: 0, y: 6)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true)) {
+                    sheen.toggle()
+                }
+            }
+    }
+}
