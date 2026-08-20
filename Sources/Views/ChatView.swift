@@ -98,11 +98,16 @@ struct ChatView: View {
 
             // PDF 导出
             Button {
-                do {
-                    pdfURL = try chatVM.exportPDF()
-                    showPDFShare = true
-                } catch {
-                    chatVM.errorMessage = "无内容可导出"
+                Task {
+                    do {
+                        chatVM.statusMessage = "正在生成 PDF…"
+                        pdfURL = try await chatVM.exportPDF()
+                        chatVM.statusMessage = nil
+                        showPDFShare = true
+                    } catch {
+                        chatVM.statusMessage = nil
+                        chatVM.errorMessage = "无内容可导出"
+                    }
                 }
             } label: {
                 Image(systemName: "doc.text.fill")
@@ -152,7 +157,11 @@ struct ChatView: View {
                         MessageBubble(
                             message: msg,
                             isSelectionMode: selectionMode,
-                            isSelected: selectedIDs.contains(msg.id)
+                            isSelected: selectedIDs.contains(msg.id),
+                            onRegenerate: (msg.role == .assistant && msg.id == messages.last?.id) ? {
+                                chatVM.regenerateLast(settings: settingsVM.settings,
+                                                      activeModel: activeModel)
+                            } : nil
                         ) {
                             toggleSelect(msg.id)
                         } onDeleteRequested: {
