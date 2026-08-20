@@ -120,6 +120,8 @@ struct InputBar: View {
                         // 延迟 0.5 秒再停止录音，防止用户话没说完
                         Task { @MainActor in
                             try? await Task.sleep(nanoseconds: 500_000_000)
+                            // 防重入：延迟期间用户已开始新录音则不再处理旧任务
+                            guard !SpeechRecognizer.shared.isRecording else { return }
                             let t = SpeechRecognizer.shared.stop()
                             if !t.isEmpty {
                                 let merged = (text + t).trimmingCharacters(in: .whitespacesAndNewlines)
