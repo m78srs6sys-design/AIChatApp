@@ -24,6 +24,7 @@ struct ChatView: View {
     private var activeModel: LocalModel? {
         guard let id = modelManager.activeModelId else { return nil }
         return LocalModelCatalog.find(id: id)
+            ?? modelManager.remoteModels.first(where: { $0.id == id })
     }
 
     private var messages: [ChatMessage] {
