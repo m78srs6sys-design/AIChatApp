@@ -63,7 +63,7 @@ struct MessageBubble: View {
                                 if speech.isSpeakingNow {
                                     speech.stop()
                                 } else {
-                                    speech.speak(message.content)
+                                    speech.speak(message.content, preferOnline: chatVM.store.currentMode == .online)
                                 }
                             } label: {
                                 Image(systemName: isThisSpeaking ? "speaker.wave.2.fill" : "speaker.wave.2")
@@ -106,7 +106,7 @@ struct MessageBubble: View {
                         if SpeechService.shared.isSpeakingNow {
                             SpeechService.shared.stop()
                         } else {
-                            SpeechService.shared.speak(message.content)
+                            SpeechService.shared.speak(message.content, preferOnline: chatVM.store.currentMode == .online)
                         }
                     } label: {
                         Label(SpeechService.shared.isSpeakingNow && SpeechService.shared.speakingText == message.content ? "停止朗读" : "朗读内容",
