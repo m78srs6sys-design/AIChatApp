@@ -62,6 +62,9 @@ final class SpeechRecognizer: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+            // 16kHz 单声道 + 低 IO 缓冲：识别引擎的最优输入，显著提升准确率
+            try session.setPreferredSampleRate(16_000)
+            try session.setPreferredIOBufferDuration(0.05)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             lastError = "无法初始化麦克风（\(error.localizedDescription)）"
@@ -71,6 +74,16 @@ final class SpeechRecognizer: ObservableObject {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.taskHint = .dictation  // 设为 Dictation 模式，提升通用听写准确率
+        // 自动补全标点（iOS 16+），让识别结果更可读、更贴合自然语言模型
+        if #available(iOS 16.0, *) {
+            request.addsPunctuation = true
+        }
+        // 常用上下文词，提升中文对话场景的识别命中率
+        request.contextualStrings = [
+            "天气", "搜索", "图片", "生成", "对话", "你好", "谢谢",
+            "推荐", "附近", "美食", "景点", "新闻", "今天", "明天",
+            "北京", "上海", "深圳", "广州", "杭州"
+        ]
         // 允许使用在线识别（比纯离线更准确，需要网络）
         if #available(iOS 17.0, *) {
             request.requiresOnDeviceRecognition = false
@@ -78,8 +91,12 @@ final class SpeechRecognizer: ObservableObject {
         self.request = request
 
         let node = audioEngine.inputNode
-        let fmt = node.outputFormat(forBus: 0)
-        node.installTap(onBus: 0, bufferSize: 1024, format: fmt) { [weak self] buffer, _ in
+        // 统一以 16kHz 单声道 Float32 送入识别引擎（AVAudioEngine 会自动重采样）
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                   sampleRate: 16_000,
+                                   channels: 1,
+                                   interleaved: false)
+        node.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             self?.request?.append(buffer)
         }
         tapInstalled = true
