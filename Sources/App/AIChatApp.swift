@@ -2,9 +2,11 @@ import SwiftUI
 
 @main
 struct AIChatApp: App {
+    /// 后台下载会话 / 后台生成任务续跑代理
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var chatVM = ChatViewModel()
     @StateObject private var settingsVM = SettingsViewModel()
-    @StateObject private var modelManager = LocalModelManager()
+    @StateObject private var modelManager = LocalModelManager.shared
     @StateObject private var store = ConversationStore.shared
 
     init() {
