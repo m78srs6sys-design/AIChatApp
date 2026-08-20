@@ -293,7 +293,8 @@ extension LocalModelManager: URLSessionDownloadDelegate {
         }
 
         DispatchQueue.main.async { [weak self] in
-            guard let self, let model = LocalModelCatalog.find(id: modelId) else { return }
+            guard let self else { return }
+            guard LocalModelCatalog.find(id: modelId) != nil else { return }
             // 尝试从错误中恢复断点数据
             if let data = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
                 self.resumeData[key] = data
