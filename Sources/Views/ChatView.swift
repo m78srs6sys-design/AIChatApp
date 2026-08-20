@@ -10,6 +10,8 @@ struct ChatView: View {
     @State private var showPDFShare = false
     @State private var showConversations = false
     @State private var pdfURL: URL?
+    @State private var isExportingPDF = false
+    @State private var pdfProgress: Double = 0
 
     // 语音输入开关
     @State private var voiceMode: Bool = false
@@ -51,6 +53,27 @@ struct ChatView: View {
                          onSend: { chatVM.send(settings: settingsVM.settings, activeModel: activeModel) },
                          onStop: { chatVM.stopGeneration() },
                          onVoiceError: { chatVM.errorMessage = $0 })
+            }
+            // PDF 导出进度浮层
+            if isExportingPDF {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                VStack(spacing: 12) {
+                    ProgressView(value: pdfProgress, total: 1.0)
+                        .progressViewStyle(LinearProgressViewStyle(tint: AppTheme.accent))
+                        .frame(width: 160)
+                    Text("正在生成 PDF…\(Int(pdfProgress * 100))%")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(AppTheme.primaryText)
+                }
+                .padding(20)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(AppTheme.surfaceElevated)
+                        .shadow(color: .black.opacity(0.25), radius: 16, x: 0, y: 8)
+                )
+                .transition(.scale(scale: 0.9).combined(with: .opacity))
             }
         }
         .navigationBarHidden(true)
@@ -98,24 +121,31 @@ struct ChatView: View {
 
             // PDF 导出
             Button {
+                guard !isExportingPDF else { return }
                 Task {
+                    isExportingPDF = true
+                    pdfProgress = 0
+                    chatVM.statusMessage = "正在生成 PDF…"
                     do {
-                        chatVM.statusMessage = "正在生成 PDF…"
-                        pdfURL = try await chatVM.exportPDF()
+                        pdfURL = try await chatVM.exportPDF { progress in
+                            pdfProgress = progress
+                        }
                         chatVM.statusMessage = nil
                         showPDFShare = true
                     } catch {
                         chatVM.statusMessage = nil
                         chatVM.errorMessage = "无内容可导出"
                     }
+                    isExportingPDF = false
                 }
             } label: {
-                Image(systemName: "doc.text.fill")
+                Image(systemName: isExportingPDF ? "doc.text.fill" : "doc.text.fill")
                     .font(.system(size: 16))
                     .foregroundColor(AppTheme.secondaryText)
                     .frame(width: 38, height: 38)
                     .background(Circle().fill(AppTheme.surface))
             }
+            .disabled(isExportingPDF)
             .buttonStyle(BounceButtonStyle())
 
             // 清空
