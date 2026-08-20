@@ -8,6 +8,8 @@ struct AIChatApp: App {
     @StateObject private var store = ConversationStore.shared
 
     init() {
+        // 安装闪退日志记录（自动存储到 Documents/CrashLogs/）
+        CrashLogger.shared.install()
         // 强制深色主题
         UITabBar.appearance().scrollEdgeAppearance = UITabBarAppearance().alsoDark()
     }
