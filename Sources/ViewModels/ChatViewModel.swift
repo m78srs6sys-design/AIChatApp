@@ -442,7 +442,7 @@ final class ChatViewModel: ObservableObject {
             return ([card], "[HTML 卡片已生成]")
 
         case "system":
-            let (desc, success) = await skillService.executeSystemAction(command: content)
+            let (desc, _) = await skillService.executeSystemAction(command: content)
             let att = MessageAttachment.systemAction(action: content, description: desc)
             return ([att], "系统操作「\(content)」：\(desc)")
 
