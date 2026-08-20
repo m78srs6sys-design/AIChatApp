@@ -141,12 +141,15 @@ struct SettingsView: View {
                                 .foregroundColor(AppTheme.tertiaryText)
                                 .fixedSize(horizontal: false, vertical: true)
 
-                            ForEach(Array(settingsVM.settings.workflows.indices), id: \.self) { idx in
-                                let p = settingsVM.settings.workflows[idx]
+                            ForEach(settingsVM.settings.workflows) { p in
                                 HStack(alignment: .top, spacing: 10) {
                                     Toggle(isOn: Binding(
-                                        get: { settingsVM.settings.workflows[idx].enabled },
-                                        set: { settingsVM.settings.workflows[idx].enabled = $0 }
+                                        get: { settingsVM.settings.workflows.first(where: { $0.id == p.id })?.enabled ?? false },
+                                        set: { newVal in
+                                            if let idx = settingsVM.settings.workflows.firstIndex(where: { $0.id == p.id }) {
+                                                settingsVM.settings.workflows[idx].enabled = newVal
+                                            }
+                                        }
                                     )) { EmptyView() }
                                         .labelsHidden()
                                         .toggleStyle(SwitchToggleStyle(tint: AppTheme.accent))
@@ -721,11 +724,19 @@ struct WorkflowRuleGeneratorSheet: View {
                     message = "没有解析到有效规则，请说得更具体一些，或换一种说法重试"
                     messageTint = AppTheme.warning
                 } else {
-                    settingsVM.settings.workflows.append(contentsOf: presets)
-                    settingsVM.save()
-                    message = "已添加 \(presets.count) 条规则 ✅"
-                    messageTint = AppTheme.success
-                    text = ""
+                    // 过滤掉已存在的同名规则
+                    let existingNames = Set(settingsVM.settings.workflows.map { $0.name })
+                    let newPresets = presets.filter { !existingNames.contains($0.name) }
+                    if newPresets.isEmpty {
+                        message = "生成的规则都已存在，试试换个描述"
+                        messageTint = AppTheme.warning
+                    } else {
+                        settingsVM.settings.workflows.append(contentsOf: newPresets)
+                        settingsVM.save()
+                        message = "已添加 \(newPresets.count) 条新规则 ✅（过滤掉 \(presets.count - newPresets.count) 条重复）"
+                        messageTint = AppTheme.success
+                        text = ""
+                    }
                 }
             } catch {
                 message = "生成失败：\(error.localizedDescription)"
@@ -746,10 +757,17 @@ struct WorkflowRuleGeneratorSheet: View {
             ("出行路线", "询问怎么去某地、交通路线", [ToolStep(tool: .location), ToolStep(tool: .search, param: "从当前位置出发的路线")]),
             ("系统操作", "调节亮度 / 音量、开关手电筒、跳转系统设置", [ToolStep(tool: .system, param: "brightness 50")]),
         ]
-        let presets = pool.shuffled().prefix(3).map { WorkflowPreset(name: $0.0, trigger: $0.1, steps: $0.2) }
+        let existingNames = Set(settingsVM.settings.workflows.map { $0.name })
+        let candidates = pool.filter { !existingNames.contains($0.0) }
+        guard !candidates.isEmpty else {
+            message = "所有内置规则都已存在，无法随机生成新的"
+            messageTint = AppTheme.warning
+            return
+        }
+        let presets = candidates.shuffled().prefix(3).map { WorkflowPreset(name: $0.0, trigger: $0.1, steps: $0.2) }
         settingsVM.settings.workflows.append(contentsOf: presets)
         settingsVM.save()
-        message = "已随机添加 \(presets.count) 条规则 🎲"
+        message = "已随机添加 \(presets.count) 条新规则 🎲"
         messageTint = AppTheme.success
     }
 
