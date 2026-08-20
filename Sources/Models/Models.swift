@@ -91,10 +91,13 @@ struct ChatMessage: Identifiable, Codable, Hashable {
 struct LocalModelPart: Codable, Hashable {
     let filename: String
     let downloadURL: String
+    /// 精确字节大小（ModelScope API 返回；未知时为 nil，会按 Content-Length 补全）
+    var size: Int64?
 
-    init(filename: String, downloadURL: String) {
+    init(filename: String, downloadURL: String, size: Int64? = nil) {
         self.filename = filename
         self.downloadURL = downloadURL
+        self.size = size
     }
 }
 
