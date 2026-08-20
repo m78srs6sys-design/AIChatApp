@@ -577,9 +577,10 @@ final class ChatViewModel: ObservableObject {
         return labels.isEmpty ? "（已完成）" : "🛠 已调用：\(labels.joined(separator: "、"))"
     }
 
-    // MARK: - TTS（系统本地朗读，无需网络/密钥）
+    // MARK: - TTS（联网模式用微软在线合成，离线回退系统本地朗读）
     private func synthesizeAndPlay(text: String) {
-        SpeechService.shared.speak(text)
+        let online = store.currentMode == .online
+        SpeechService.shared.speak(text, preferOnline: online)
         isPlayingAudio = true
     }
 
