@@ -154,20 +154,8 @@ struct ChatView: View {
                         emptyState
                     }
                     ForEach(messages) { msg in
-                        MessageBubble(
-                            message: msg,
-                            isSelectionMode: selectionMode,
-                            isSelected: selectedIDs.contains(msg.id),
-                            onRegenerate: (msg.role == .assistant && msg.id == messages.last?.id) ? {
-                                chatVM.regenerateLast(settings: settingsVM.settings,
-                                                      activeModel: activeModel)
-                            } : nil
-                        ) {
-                            toggleSelect(msg.id)
-                        } onDeleteRequested: {
-                            enterSelectionMode(preselect: msg.id)
-                        }
-                        .id(msg.id)
+                        bubble(for: msg)
+                            .id(msg.id)
                     }
                 }
                 .padding(.vertical, 12)
@@ -338,6 +326,24 @@ struct ChatView: View {
             selectedIDs.remove(id)
         } else {
             selectedIDs.insert(id)
+        }
+    }
+
+    /// 构建单条消息气泡（独立函数避免类型推断超时）
+    private func bubble(for msg: ChatMessage) -> MessageBubble {
+        let canRegenerate = msg.role == .assistant && msg.id == messages.last?.id
+        let regen: (() -> Void)? = canRegenerate ? {
+            chatVM.regenerateLast(settings: settingsVM.settings, activeModel: activeModel)
+        } : nil
+        return MessageBubble(
+            message: msg,
+            isSelectionMode: selectionMode,
+            isSelected: selectedIDs.contains(msg.id),
+            onRegenerate: regen
+        ) {
+            toggleSelect(msg.id)
+        } onDeleteRequested: {
+            enterSelectionMode(preselect: msg.id)
         }
     }
 
