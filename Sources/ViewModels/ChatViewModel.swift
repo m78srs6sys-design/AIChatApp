@@ -124,24 +124,35 @@ final class ChatViewModel: ObservableObject {
         var systemPrompt: String? = nil
         if settings.onlineFeaturesEnabled {
             var sp = """
-            你是一个会主动使用工具的智能助手。工作流程：
+            你是一个会主动使用工具的智能助手。你可以调用下面列出的「工具标签」来获取信息或执行操作。
+
+            【工具标签格式 · 必须严格遵守】
+            - 标签名全部为小写英文字母，尖括号 < 和 > 必须成对出现，且标签名必须与下方逐字一致，一个字母都不能错。
+            - 调用工具时，这一条消息只写这「一个」标签，不要在标签前后加任何解释、标点或换行，也不要用代码块 ``` 把它包起来。
+            - 标签名内部不能有空格；有内容的工具把内容写在开标签和闭标签之间；无内容的工具写成自闭合形式 <location/>，不要写内容。
+            - 严禁发明列表之外的任何标签，严禁把工具标签写成 <img>、![...](...)、Markdown 或任何 HTML/XML 代码来替代。
+
+            【可用的工具（请原样复制此格式，只改内容部分）】
+              <location/>
+              <search>查询词</search>
+              <weather>城市名 或 我的位置</weather>
+              <web>网页URL</web>
+              <image>英文画面描述</image>
+              <imageSearch>查询词</imageSearch>
+              <card>完整HTML代码</card>
+              <system>命令</system>
+                <system> 的命令只能是以下之一（数字可写 50 表示 50%，也可写 0.5）：
+                brightness 50 / volume 50 / torch on / torch off / 低电量 / wifi / 蓝牙 / 显示 / 声音
+
+            【工作流程】
             1) 先在脑中判断用户真正需要什么信息。
-            2) 需要时调用工具获取信息：
-               - <location/> 获取用户当前定位（城市 / 坐标）
-               - <search>查询词</search> 联网搜索
-               - <weather>城市名 或 "我的位置"</weather> 查询天气
-               - <web>网页URL</web> 网页摘要
-               - <image>英文画面描述</image> 生成 AI 创意图片（当用户想生成画作、插画、海报等创意内容时使用）
-               - <imageSearch>查询词</imageSearch> 搜索真实照片（当用户问某物/某地长什么样、想看真实图片时使用，区别于 AI 生成图片）
-               - <card>HTML 代码</card> 生成可视化卡片（仅当用户主动要求可视化，或纯文字无法表达清楚时使用；卡片内容需是完整 HTML）
-               - <system>命令</system> 执行系统操作（格式必须简单：brightness 0.5、volume 0.5、torch on、torch off、低电量、wifi、蓝牙、显示、声音）
-            3) 可以连续调用多个工具来逐步完成任务，例如：先 <location/> 得到所在城市，再 <search>该城市 附近景点</search>，再 <weather>我的位置</weather>。
-            4) 收集到足够信息后，用自然语言给出最终回答并解释；需要的数据会自动以卡片形式展示。
-            规则：
-            - 每次只输出一个工具标签；工具标签之外不要写多余文字。
-            - 生成图片时只能使用 <image>描述</image> 标签，严禁输出 <img> 标签、Markdown 图片语法 ![...](...)、<picture> 或任何 HTML/XML 代码来替代。系统会自动把 <image> 标签渲染成真实图片。
-            - 若某工具执行失败，不要反复重试同一工具，直接告诉用户该功能暂时不可用，并给出文字版帮助。
-            - 当你已经拿到所需信息、准备回答时，不要再输出工具标签，直接写回答。
+            2) 需要时按上面格式输出「一个」工具标签；可连续多次调用不同工具逐步完成，例如：先 <location/> 得到所在城市，再 <search>该城市 附近景点</search>，再 <weather>我的位置</weather>。
+            3) 收集到足够信息后，停止输出任何标签，用自然语言给出最终回答并解释；需要的结果会自动以图片 / 卡片 / 附件形式展示。
+
+            【红线（违反会导致功能失效）】
+            - 生成图片只能用 <image>描述</image>；系统会自动把它渲染成真实图片，绝不要输出 <img>、![...](...) 或任何 HTML/XML 来替代，否则图片无法显示。
+            - 若某工具执行失败，不要反复重试同一工具，直接告诉用户该功能暂时不可用并给文字版帮助。
+            - 准备回答时不要再输出工具标签，直接写自然语言。
             """
             let wf = Self.workflowPrompt(settings.workflows)
             if !wf.isEmpty { sp += "\n\n" + wf }
@@ -523,6 +534,42 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: - 模型主动调用标签解析
 
+    /// 工具标签「别名 → 规范工具类型」映射。
+    /// 用途 1：模型把标签拼错（如 <imag>、<serach>）时仍能识别成正确工具。
+    /// 用途 2：stripCallTags 用同一份表把所有工具类标签（含错拼）从可见文本中清掉，杜绝泄漏。
+    private static let toolAlias: [String: String] = [
+        // image（生成图片）
+        "image": "image", "imag": "image", "img": "image", "picture": "image",
+        "photo": "image", "imagegen": "image", "image_gen": "image",
+        "generate_image": "image", "image_generate": "image", "imagegenerate": "image",
+        "draw": "image", "paint": "image", "drawing": "image",
+        // imagesearch（真实图片搜索）
+        "imagesearch": "imagesearch", "images": "imagesearch", "image_search": "imagesearch",
+        "realimage": "imagesearch", "realphoto": "imagesearch", "searchimage": "imagesearch",
+        // search（联网搜索）
+        "search": "search", "serach": "search", "serch": "search", "seach": "search",
+        "query": "search",
+        // weather（天气）
+        "weather": "weather", "wether": "weather", "weathr": "weather",
+        // web（网页摘要）
+        "web": "web", "webpage": "web", "webpagesummary": "web", "websummary": "web",
+        // card（可视化卡片）
+        "card": "card", "html": "card", "htmlcard": "card", "visualcard": "card",
+        // system（系统操作）
+        "system": "system", "sys": "system", "sysop": "system", "systemop": "system",
+        // location（定位，无内容）
+        "location": "location", "loc": "location", "mylocation": "location", "mypos": "location",
+    ]
+
+    /// 带内容工具标签的别名（不含 location，location 自闭合单独处理）
+    private static var contentTagPattern: String {
+        toolAlias.keys.filter { toolAlias[$0] != "location" }.joined(separator: "|")
+    }
+    /// location 类自闭合标签的别名
+    private static var locationTagPattern: String {
+        toolAlias.keys.filter { toolAlias[$0] == "location" }.joined(separator: "|")
+    }
+
     /// 把用户自定义的「场景 → 工具流程」方案，渲染成注入系统提示的指令文本
     private static func workflowPrompt(_ presets: [WorkflowPreset]) -> String {
         let enabled = presets.filter { $0.enabled && !$0.steps.isEmpty }
@@ -555,7 +602,7 @@ final class ChatViewModel: ObservableObject {
                     if let jsonData = jsonStr.data(using: .utf8),
                        let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
                        let name = json["name"] as? String {
-                        let kind = name.lowercased()
+                        let kind = Self.toolAlias[name.lowercased()] ?? name.lowercased()
                         var content = ""
                         // 提取 arguments 中的 query 或 prompt
                         if let args = json["arguments"] as? [String: Any] {
@@ -572,22 +619,25 @@ final class ChatViewModel: ObservableObject {
             }
         }
         
-        // 2. 如果没有找到 JSON 格式，尝试解析 XML 标签格式
+        // 2. 如果没有找到 JSON 格式，尝试解析 XML 标签格式（含常见错拼别名）
         if results.isEmpty {
-            // 带内容的工具标签（注意 imageSearch 优先匹配，放在 image 前面）
-            guard let regex = try? NSRegularExpression(
-                pattern: #"<(imageSearch|search|image|weather|web|card|system)>(.*?)</\1>"#,
-                options: [.dotMatchesLineSeparators, .caseInsensitive]) else { return results }
-            let ns = text as NSString
-            let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
-            for m in matches {
-                let kind = ns.substring(with: m.range(at: 1)).lowercased()
-                let content = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !content.isEmpty { results.append((kind, content)) }
+            // 带内容的工具标签：用别名表覆盖所有拼错形式（img/imag/serach/...）
+            let pattern = #"<(\#(Self.contentTagPattern))>(.*?)</\1>"#
+            if let regex = try? NSRegularExpression(
+                pattern: pattern,
+                options: [.dotMatchesLineSeparators, .caseInsensitive]) {
+                let ns = text as NSString
+                let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+                for m in matches {
+                    let rawKind = ns.substring(with: m.range(at: 1)).lowercased()
+                    let kind = Self.toolAlias[rawKind] ?? rawKind
+                    let content = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !content.isEmpty { results.append((kind, content)) }
+                }
             }
-            // <location/> 或 <location></location>：定位工具，无参数
-            if let locRegex = try? NSRegularExpression(pattern: #"<location\s*/?>"#,
-                                                       options: [.caseInsensitive]),
+            // <location/> 或 <location></location> 及其错拼（loc / mylocation ...）：定位工具，无参数
+            let locPattern = #"<(\#(Self.locationTagPattern))\s*/?>(?:\s*</\1>)?|</(\#(Self.locationTagPattern))>"#
+            if let locRegex = try? NSRegularExpression(pattern: locPattern, options: [.caseInsensitive]),
                locRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil {
                 results.append(("location", ""))
             }
@@ -665,13 +715,12 @@ final class ChatViewModel: ObservableObject {
         return true
     }
 
-    /// 移除模型回复中的调用标签（仅展示干净文本）
-    /// 覆盖所有工具标签：<imageSearch>、<search>、<image>、<weather>、<web>、<card>、<system>、<location/>
-    /// 同时支持 JSON 格式：{"name": "xxx"} 或 {"name": "xxx", "arguments": {...}}
+    /// 移除模型回复中的调用标签（仅展示干净文本），杜绝工具标签泄漏给用户。
+    /// 覆盖所有工具标签及其常见错拼（由 toolAlias 统一维护），同时支持 JSON 工具调用格式。
     static func stripCallTags(_ text: String) -> String {
         var result = text
-        
-        // 1. 移除 JSON 格式的工具调用（使用与 extractCalls 相同的逻辑）
+
+        // 1. 移除 JSON 格式的工具调用：{"name": "xxx"} 或 {"name": "xxx", "arguments": {...}}
         var depth = 0
         var startIdx: String.Index?
         var rangesToRemove: [Range<String.Index>] = []
@@ -684,7 +733,6 @@ final class ChatViewModel: ObservableObject {
                 depth -= 1
                 if depth == 0, let start = startIdx {
                     let jsonStr = String(text[start...index])
-                    // 检查是否是工具调用 JSON
                     if let jsonData = jsonStr.data(using: .utf8),
                        let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
                        json["name"] != nil {
@@ -694,47 +742,48 @@ final class ChatViewModel: ObservableObject {
                 }
             }
         }
-        // 从后往前移除，避免索引变化
         for range in rangesToRemove.reversed() {
             result.removeSubrange(range)
         }
-        
-        // 2. 移除 XML 格式的带内容标签：<xxx>...</xxx>
+
+        // 2. 移除 XML 带内容标签：<xxx>...</xxx>（含错拼别名，如 <imag>、<serach>）
+        let pairPattern = #"<(\#(Self.contentTagPattern))>(.*?)</\1>"#
         if let regex = try? NSRegularExpression(
-            pattern: #"<(imageSearch|search|image|weather|web|card|system)>(.*?)</\1>"#,
+            pattern: pairPattern,
             options: [.dotMatchesLineSeparators, .caseInsensitive]) {
             result = regex.stringByReplacingMatches(
                 in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
         }
-        // 移除自闭合标签：<location/>、<location></location>
+        // 3. 移除自闭合 location 标签及其错拼：<location/>、<loc></loc> ...
+        let locPattern = #"<(\#(Self.locationTagPattern))\s*/?>(?:\s*</\1>)?|</(\#(Self.locationTagPattern))>"#
         if let locRegex = try? NSRegularExpression(
-            pattern: #"<location\s*/?>(\s*</location>)?"#,
-            options: [.caseInsensitive]) {
+            pattern: locPattern, options: [.caseInsensitive]) {
             result = locRegex.stringByReplacingMatches(
                 in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
         }
 
-        // 3. 移除 HTML/Markdown 图片语法残留（模型不遵循标签约定时的兜底清理）：
-        //    <img ...>、![描述](目标)
-        if let imgRegex = try? NSRegularExpression(
-            pattern: #"<img\b[^>]*>"#,
-            options: [.caseInsensitive]) {
-            result = imgRegex.stringByReplacingMatches(
+        // 4. 兜底清理：模型可能只写了单边开/闭标签或带了属性的标签（如 <img src="...">），
+        //    只要标签名属于工具族就一律移除。<tag> / </tag> 都覆盖，且不影响正常文本中的 "<"。
+        let allTags = "\(Self.contentTagPattern)|\(Self.locationTagPattern)"
+        let strayPattern = #"</?(?:\#(allTags))\b[^>]*>"#
+        if let strayRegex = try? NSRegularExpression(
+            pattern: strayPattern, options: [.caseInsensitive]) {
+            result = strayRegex.stringByReplacingMatches(
                 in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
         }
+        // 5. Markdown 图片语法 ![描述](目标) → 仅保留描述文字（图片已作为附件渲染）
         if let mdImgRegex = try? NSRegularExpression(
             pattern: #"!\[([^\]]*)\]\(([^)]*)\)"#,
             options: [.caseInsensitive]) {
             result = mdImgRegex.stringByReplacingMatches(
                 in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1")
         }
-        // 移除 <Image> / <picture> 等其它 XML 图片变体的成对标签
-        if let xmlImgRegex = try? NSRegularExpression(
-            pattern: #"</?(?:image|picture|img|photo|generate-image|image-generate)[^>]*>"#,
-            options: [.caseInsensitive]) {
-            result = xmlImgRegex.stringByReplacingMatches(
-                in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+
+        // 6. 若清理后文本只剩代码围栏（模型把标签包在 ``` 里）或空白，则视为纯工具调用，不显示任何文本
+        let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty || cleaned.allSatisfy({ $0 == "`" || $0.isWhitespace }) {
+            return ""
         }
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned
     }
 }
