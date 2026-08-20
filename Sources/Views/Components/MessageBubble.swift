@@ -12,6 +12,8 @@ struct MessageBubble: View {
     var isSelected: Bool = false
     var onSelect: (() -> Void)? = nil
     var onDeleteRequested: (() -> Void)? = nil
+    /// 重新生成该回复（大厂标配交互，仅最后一条 AI 消息可用）
+    var onRegenerate: (() -> Void)? = nil
 
     @State private var showReasoning: Bool = false
 
@@ -64,6 +66,25 @@ struct MessageBubble: View {
                         UIPasteboard.general.string = message.content
                     } label: {
                         Label("复制内容", systemImage: "doc.on.doc")
+                    }
+                    // 朗读 / 停止朗读（大厂 AI 应用标配）
+                    Button {
+                        if SpeechService.shared.isSpeakingNow {
+                            SpeechService.shared.stop()
+                        } else {
+                            SpeechService.shared.speak(message.content)
+                        }
+                    } label: {
+                        Label(SpeechService.shared.isSpeakingNow ? "停止朗读" : "朗读内容",
+                              systemImage: "speaker.wave.2")
+                    }
+                    // 重新生成回复（仅最后一条 AI 消息）
+                    if message.role == .assistant, let onRegenerate {
+                        Button {
+                            onRegenerate()
+                        } label: {
+                            Label("重新生成", systemImage: "arrow.clockwise")
+                        }
                     }
                 }
                 Button(role: .destructive) {
@@ -156,12 +177,25 @@ struct MessageBubble: View {
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
                 } else {
-                    Text(message.content)
-                        .font(.system(size: 16))
-                        .foregroundColor(AppTheme.aiBubbleText)
-                        .multilineTextAlignment(.leading)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 12)
+                    // AI 消息：支持 Markdown 渲染（加粗/斜体/行内代码/链接），解析失败回退纯文本
+                    if let attr = try? AttributedString(
+                        markdown: message.content,
+                        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+                    ) {
+                        Text(attr)
+                            .font(.system(size: 16))
+                            .foregroundColor(AppTheme.aiBubbleText)
+                            .multilineTextAlignment(.leading)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 12)
+                    } else {
+                        Text(message.content)
+                            .font(.system(size: 16))
+                            .foregroundColor(AppTheme.aiBubbleText)
+                            .multilineTextAlignment(.leading)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 12)
+                    }
                 }
                 if message.isStreaming && !message.content.isEmpty {
                     TypingCursor()
@@ -194,8 +228,22 @@ struct MessageBubble: View {
 /// 附件展示（图片 / 定位 / 搜索结果 / 天气 / 网页）
 struct AttachmentView: View {
     let attachment: MessageAttachment
+    /// HTML 卡片内容高度（由 WebView 内 JS 测量后回调，实现自适应）
+    @State private var cardHeight: CGFloat = 140
+    /// 图片全屏预览
+    @State private var showImagePreview = false
 
     var body: some View {
+        attachmentContent
+            .fullScreenCover(isPresented: $showImagePreview) {
+                if case .image(let url) = attachment {
+                    FullScreenImageViewer(urlString: url, isPresented: $showImagePreview)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var attachmentContent: some View {
         switch attachment {
         case .image(let url):
             AsyncImage(url: URL(string: url)) { phase in
@@ -221,6 +269,7 @@ struct AttachmentView: View {
                     EmptyView()
                 }
             }
+            .onTapGesture { showImagePreview = true }
         case .location(let lat, let lon, let name):
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -320,8 +369,8 @@ struct AttachmentView: View {
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
 
         case .htmlCard(let html):
-            WebViewCard(html: html)
-                .frame(minHeight: 120, maxHeight: 360)
+            WebViewCard(html: html, onHeightChange: { h in cardHeight = h })
+                .frame(height: min(max(120, cardHeight), 480))
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous)
@@ -350,10 +399,74 @@ struct AttachmentView: View {
     }
 }
 
+/// 图片全屏查看器（点击图片放大查看，支持捏合缩放）
+struct FullScreenImageViewer: View {
+    let urlString: String
+    @Binding var isPresented: Bool
+    /// 缩放状态
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+
+            // 图片区域（捏合缩放）
+            AsyncImage(url: URL(string: urlString)) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .scaleEffect(scale)
+                        .gesture(
+                            MagnificationGesture()
+                                .onChanged { value in
+                                    scale = min(4.0, max(1.0, lastScale * value))
+                                }
+                                .onEnded { _ in lastScale = scale }
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .empty:
+                    ProgressView()
+                        .tint(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .failure:
+                    VStack(spacing: 10) {
+                        Image(systemName: "photo.badge.exclamationmark")
+                            .font(.system(size: 40))
+                            .foregroundColor(.gray)
+                        Text("图片加载失败")
+                            .font(.system(size: 14))
+                            .foregroundColor(.gray)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                @unknown default:
+                    EmptyView()
+                }
+            }
+
+            // 关闭按钮
+            Button {
+                isPresented = false
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundColor(.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.5), radius: 4)
+                    .padding(16)
+            }
+        }
+        .statusBarHidden()
+    }
+}
+
 /// HTML 可视化卡片（圆角，WKWebView 渲染，带防御性错误处理）
 /// 加载失败时不暴露原始 HTML，统一降级为「该链接暂不支持预览」
+/// 支持内容高度自适应：加载完成后通过 JS 测量内容高度并回调
 struct WebViewCard: UIViewRepresentable {
     let html: String
+    var onHeightChange: ((CGFloat) -> Void)? = nil
     @State private var hasError: Bool = false
 
     func makeUIView(context: Context) -> ErrorHandlingHostingView {
@@ -376,11 +489,19 @@ struct WebViewCard: UIViewRepresentable {
     }
 
     func makeCoordinator() -> WebViewCoordinator {
-        WebViewCoordinator()
+        let coordinator = WebViewCoordinator()
+        coordinator.onHeightChange = onHeightChange
+        return coordinator
     }
 
+    /// 智能包装：模型输出完整 HTML 文档时直接使用（避免双重包裹）；
+    /// 输出内容片段时包装成深色主题卡片，并注入统一样式。
     private var wrappedHTML: String {
-        """
+        let lower = html.lowercased()
+        if lower.contains("<html") || lower.contains("<body") {
+            return html
+        }
+        return """
         <!DOCTYPE html>
         <html>
         <head>
@@ -388,33 +509,68 @@ struct WebViewCard: UIViewRepresentable {
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
-                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
                 font-size: 14px;
                 color: #e8e6f0;
                 background: transparent;
                 padding: 14px;
-                line-height: 1.5;
+                line-height: 1.55;
+                word-break: break-word;
             }
             .card {
-                background: rgba(30, 28, 46, 0.85);
+                background: linear-gradient(135deg, rgba(38, 34, 60, 0.92), rgba(24, 22, 40, 0.92));
+                border: 1px solid rgba(255,255,255,0.06);
                 border-radius: 16px;
-                padding: 16px;
+                padding: 16px 18px;
                 overflow: hidden;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.25);
             }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.08); }
-            th { font-weight: 600; color: #FFA06B; }
-            td { color: #e8e6f0; }
-            h1, h2, h3, h4 { color: #FFA06B; margin: 8px 0; }
+            h1, h2, h3, h4 { color: #FFA06B; margin: 10px 0 6px; line-height: 1.3; }
+            h1 { font-size: 20px; } h2 { font-size: 17px; } h3 { font-size: 15px; } h4 { font-size: 14px; }
             p { margin: 6px 0; color: #c8c6d0; }
+            table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+            th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.08); }
+            th { font-weight: 600; color: #FFA06B; font-size: 13px; }
+            td { color: #e8e6f0; font-size: 13px; }
+            tr:last-child td { border-bottom: none; }
+            ul, ol { padding-left: 22px; margin: 6px 0; }
+            li { margin: 4px 0; color: #c8c6d0; }
+            a { color: #6FB7FF; text-decoration: none; }
+            code {
+                background: rgba(255,255,255,0.08);
+                padding: 2px 7px;
+                border-radius: 5px;
+                font-size: 12.5px;
+                color: #FFB86C;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            }
+            pre {
+                background: rgba(0,0,0,0.35);
+                padding: 12px;
+                border-radius: 10px;
+                overflow-x: auto;
+                margin: 8px 0;
+            }
+            pre code { background: transparent; padding: 0; color: #e8e6f0; }
+            blockquote {
+                border-left: 3px solid #FFA06B;
+                padding: 4px 0 4px 12px;
+                margin: 8px 0;
+                color: #a8a6b8;
+                font-style: italic;
+            }
+            hr { border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 14px 0; }
+            img { max-width: 100%; border-radius: 12px; margin: 6px 0; }
+            strong { color: #ffffff; }
             .badge {
                 display: inline-block;
                 background: rgba(255, 160, 107, 0.15);
                 color: #FFA06B;
-                padding: 2px 10px;
+                padding: 3px 12px;
                 border-radius: 12px;
                 font-size: 12px;
                 font-weight: 500;
+                margin: 2px 2px;
             }
         </style>
         </head>
@@ -424,9 +580,11 @@ struct WebViewCard: UIViewRepresentable {
     }
 }
 
-/// 协调器：捕获加载失败事件
+/// 协调器：捕获加载失败事件 + 测量内容高度
 final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     @MainActor var hasError: Bool = false
+    /// 内容高度变化回调（JS 测量 document 高度）
+    var onHeightChange: ((CGFloat) -> Void)?
 
     @MainActor
     func resetErrorIfNeeded() {
@@ -436,6 +594,33 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     @MainActor
     func markError() {
         hasError = true
+    }
+
+    @MainActor
+    func webView(_ webView: WKWebView,
+                 didFinish navigation: WKNavigation!) {
+        // 加载完成后测量内容高度，实现卡片自适应
+        measureHeight(webView)
+        // 延迟二次测量：图片等异步资源可能加载后才撑起高度
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self else { return }
+            self.measureHeight(webView)
+        }
+    }
+
+    @MainActor
+    private func measureHeight(_ webView: WKWebView) {
+        webView.evaluateJavaScript("document.documentElement.scrollHeight") { [weak self] result, _ in
+            // JS 返回的是 NSNumber，需转 Double 再转 CGFloat
+            if let num = result as? NSNumber {
+                let h = CGFloat(num.doubleValue)
+                if h > 0 {
+                    DispatchQueue.main.async {
+                        self?.onHeightChange?(h + 28) // 上下 padding 补偿
+                    }
+                }
+            }
+        }
     }
 
     @MainActor
