@@ -98,14 +98,14 @@ struct ModelInferenceLiveActivity: Widget {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
-                ProgressView(value: context.state.progress)
+                ProgressView(value: min(1.0, context.state.usagePercent / 100.0))
                     .tint(.orange)
                 HStack {
-                    Text("已生成 \(context.state.tokens) 字")
+                    Text("内存占用 \(Int(context.state.usagePercent))% · CPU \(Int(context.state.cpuPercent))%")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text("\(Int(context.state.progress * 100))%")
+                    Text("\(Int(context.state.usagePercent))%")
                         .font(.system(size: 12, weight: .bold))
                         .monospacedDigit()
                 }
@@ -129,14 +129,19 @@ struct ModelInferenceLiveActivity: Widget {
                     .lineLimit(1)
             }
             DynamicIslandExpandedRegion(.bottom) {
-                ProgressView(value: context.state.progress)
-                    .tint(.orange)
+                VStack(spacing: 2) {
+                    ProgressView(value: min(1.0, context.state.usagePercent / 100.0))
+                        .tint(.orange)
+                    Text("内存 \(Int(context.state.usagePercent))% · CPU \(Int(context.state.cpuPercent))% · \(context.state.tokens) token")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
             }
         } compactLeading: {
             Image(systemName: "cpu.fill")
                 .foregroundColor(.orange)
         } compactTrailing: {
-            Text("\(Int(context.state.progress * 100))%")
+            Text("\(Int(context.state.usagePercent))%")
                 .font(.system(size: 12, weight: .bold))
                 .monospacedDigit()
         } minimal: {
