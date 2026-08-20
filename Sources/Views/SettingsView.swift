@@ -361,6 +361,7 @@ struct WorkflowEditor: View {
     @Binding var preset: WorkflowPreset
     let onSave: (WorkflowPreset) -> Void
     let onCancel: () -> Void
+    @EnvironmentObject var settingsVM: SettingsViewModel
 
     var body: some View {
         NavigationStack {
@@ -461,6 +462,7 @@ struct WorkflowStepCard: View {
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
     let onDelete: () -> Void
+    @EnvironmentObject var settingsVM: SettingsViewModel
 
     @State private var showSystemDialog = false
     @State private var systemCommandDraft = ""
