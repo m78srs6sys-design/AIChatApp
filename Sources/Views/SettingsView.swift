@@ -198,7 +198,7 @@ struct SettingsView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
 
-                            // 文本输入 / AI / 随机生成规则
+                            // 文本输入 → AI 设计规则
                             Button {
                                 showRuleGenerator = true
                             } label: {
@@ -603,7 +603,7 @@ struct WorkflowStepCard: View {
     }
 }
 
-// MARK: - 文本输入 / AI / 随机生成「智能工具流程」规则
+// MARK: - 文本输入 / AI 生成「智能工具流程」规则
 struct WorkflowRuleGeneratorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var settingsVM: SettingsViewModel
@@ -620,10 +620,10 @@ struct WorkflowRuleGeneratorSheet: View {
             VStack(spacing: 16) {
                 // 说明文字
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("描述你想要的规则")
+                    Text("输入你遇到的场景或需求")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(AppTheme.secondaryText)
-                    Text("例如：\"当用户想找附近好吃的餐厅时，先获取位置，再搜索美食推荐\"")
+                    Text("不需要事无巨细，说清场景即可，AI 会自动帮你设计完整的工具流程。例如：\"帮我找好吃的\"、\"我不知道怎么去朋友家\"")
                         .font(.system(size: 12))
                         .foregroundColor(AppTheme.tertiaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -643,7 +643,7 @@ struct WorkflowRuleGeneratorSheet: View {
                     )
                     .overlay(alignment: .topLeading) {
                         if text.isEmpty {
-                            Text("在这里输入你想要的规则描述…")
+                            Text("例如：帮我找附近好吃的…")
                                 .font(.system(size: 13))
                                 .foregroundColor(AppTheme.tertiaryText)
                                 .padding(.top, 8)
@@ -656,7 +656,7 @@ struct WorkflowRuleGeneratorSheet: View {
                 Button {
                     generateWithAI()
                 } label: {
-                    Label(isGenerating ? "生成中…" : "让 AI 生成规则", systemImage: "sparkles")
+                    Label(isGenerating ? "生成中…" : "让 AI 设计规则", systemImage: "sparkles")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(AppTheme.userBubbleText)
                         .frame(maxWidth: .infinity)
@@ -665,15 +665,6 @@ struct WorkflowRuleGeneratorSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
                 .disabled(isGenerating || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                // 随机生成
-                Button {
-                    generateRandom()
-                } label: {
-                    Label("随机生成 3 条规则", systemImage: "dice.fill")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(AppTheme.accent)
-                }
 
                 if let message {
                     Text(message)
@@ -701,11 +692,31 @@ struct WorkflowRuleGeneratorSheet: View {
         guard !desc.isEmpty else { return }
         isGenerating = true
         message = nil
+        // 用户只需描述场景，AI 自主补全、设计多套完整流程
         let sys = """
-        你是「智能工具流程」方案生成器。用户会描述一个使用场景，请为其设计 1~4 条常用工具流程方案。
-        只输出一个 JSON 数组，不要任何解释、不要 Markdown 代码块、不要其它文字。格式如下：
-        [{"name":"方案名","trigger":"触发场景描述","steps":[{"tool":"location"},{"tool":"search","param":"附近 好玩的景点"}]}]
-        要求：tool 只能是 location / search / weather / web / image / system 之一；location 不需要 param，其它工具建议给中文 param。
+        你是「智能工具流程」方案设计专家。用户只告诉你他遇到的一个场景或需求，你需要：
+        1. 理解用户真正想达成的目标（他可能没说全，你要自己推断）；
+        2. 为这个场景设计 2~4 条**不同角度**的完整工具流程方案（比如：一条先定位再搜索、一条只搜索、一条查天气前置等），覆盖用户可能提出的多种表达；
+        3. 每个方案要包含：方案名（简短贴切）、触发场景描述（涵盖用户可能提到的不同说法，写详细）、以及按执行顺序排列的工具步骤。
+
+        ## 可用工具（tool 字段只能是这些之一）
+        - location：获取当前位置。**不需要 param**。
+        - search：联网搜索。param 写搜索关键词（中文），如 "附近 美食 餐厅"。
+        - weather：查天气。param 写 "我的位置" 或具体城市。
+        - web：读取某个网页内容做摘要。param 写网址或 "用户消息中的链接"。
+        - image：AI 生图。param 写英文画面描述。
+        - system：执行设备系统操作。param 写命令描述，如 "brightness 50"。
+
+        ## 输出格式（严格遵守）
+        只输出一个 JSON 数组，不要任何解释、不要 Markdown 代码块、不要其它文字：
+        [{"name":"方案名","trigger":"触发场景描述（写详细）","steps":[{"tool":"location"},{"tool":"search","param":"附近 美食 餐厅"}]}]
+
+        ## 示例
+        用户说「帮我找好吃的」，你可以设计：
+        [{"name":"周边美食推荐","trigger":"用户想找附近的餐厅/美食/好吃的，或者在问吃饭去哪","steps":[{"tool":"location"},{"tool":"search","param":"附近 美食 餐厅 推荐"}]},
+         {"name":"天气+美食综合建议","trigger":"用户既想看天气又想出去吃，比如下雨天问哪里能去","steps":[{"tool":"location"},{"tool":"weather","param":"我的位置"},{"tool":"search","param":"附近 适合现在的餐厅"}]}]
+
+        注意：方案要结合用户实际描述，不要照抄示例；步骤数量 1~3 步即可，别太长。
         """
         Task { @MainActor in
             var raw = ""
@@ -744,31 +755,6 @@ struct WorkflowRuleGeneratorSheet: View {
             }
             isGenerating = false
         }
-    }
-
-    private func generateRandom() {
-        let pool: [(String, String, [ToolStep])] = [
-            ("推荐景点", "用户想找当地 / 附近好玩的地方、旅游景点", [ToolStep(tool: .location), ToolStep(tool: .search, param: "附近 好玩的景点推荐")]),
-            ("天气咨询", "询问天气、气温、是否下雨、穿衣出行建议", [ToolStep(tool: .location), ToolStep(tool: .weather, param: "我的位置")]),
-            ("周边美食", "想找附近 / 当地好吃的、餐厅推荐", [ToolStep(tool: .location), ToolStep(tool: .search, param: "附近 美食餐厅推荐")]),
-            ("实时资讯", "询问最新新闻、时事、实时信息", [ToolStep(tool: .search, param: "今天的最新热点新闻")]),
-            ("网页速览", "想了解某个网页 / 链接的内容摘要", [ToolStep(tool: .web, param: "https://example.com")]),
-            ("生成图片", "想要一张图 / 配图 / 插画", [ToolStep(tool: .image, param: "a beautiful landscape")]),
-            ("出行路线", "询问怎么去某地、交通路线", [ToolStep(tool: .location), ToolStep(tool: .search, param: "从当前位置出发的路线")]),
-            ("系统操作", "调节亮度 / 音量、开关手电筒、跳转系统设置", [ToolStep(tool: .system, param: "brightness 50")]),
-        ]
-        let existingNames = Set(settingsVM.settings.workflows.map { $0.name })
-        let candidates = pool.filter { !existingNames.contains($0.0) }
-        guard !candidates.isEmpty else {
-            message = "所有内置规则都已存在，无法随机生成新的"
-            messageTint = AppTheme.warning
-            return
-        }
-        let presets = candidates.shuffled().prefix(3).map { WorkflowPreset(name: $0.0, trigger: $0.1, steps: $0.2) }
-        settingsVM.settings.workflows.append(contentsOf: presets)
-        settingsVM.save()
-        message = "已随机添加 \(presets.count) 条新规则 🎲"
-        messageTint = AppTheme.success
     }
 
     /// 从 AI 返回的文本中解析 JSON 数组 → WorkflowPreset 列表
