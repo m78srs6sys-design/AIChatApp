@@ -75,7 +75,7 @@ struct MessageBubble: View {
                             SpeechService.shared.speak(message.content)
                         }
                     } label: {
-                        Label(SpeechService.shared.isSpeakingNow ? "停止朗读" : "朗读内容",
+                        Label(SpeechService.shared.isSpeakingNow && SpeechService.shared.speakingText == message.content ? "停止朗读" : "朗读内容",
                               systemImage: "speaker.wave.2")
                     }
                     // 重新生成回复（仅最后一条 AI 消息）
