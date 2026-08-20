@@ -7,6 +7,8 @@ struct ConversationListView: View {
     @Binding var isPresented: Bool
     /// 长按待删除的对话（用于确认弹窗）
     @State private var pendingDelete: Conversation?
+    /// 当前正在长按缩放的对话 ID
+    @State private var pressedId: UUID?
 
     var body: some View {
         NavigationStack {
@@ -21,16 +23,28 @@ struct ConversationListView: View {
                     ForEach(store.conversations) { conv in
                         ConversationRow(conv: conv, isCurrent: conv.id == store.currentId)
                             .contentShape(Rectangle())
+                            .scaleEffect(pressedId == conv.id ? 0.96 : 1.0)
+                            .opacity(pressedId == conv.id ? 0.85 : 1.0)
+                            .animation(.easeInOut(duration: 0.15), value: pressedId)
                             .onTapGesture {
                                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                                     store.select(conv.id)
                                     isPresented = false
                                 }
                             }
-                            // 长按删除对话
-                            .onLongPressGesture(minimumDuration: 0.5) {
+                            // 长按删除对话：带缩放动画 + 触感反馈
+                            .onLongPressGesture(minimumDuration: 0.5,
+                                                pressing: { isPressing in
+                                pressedId = isPressing ? conv.id : nil
+                                if isPressing {
+                                    let impact = UIImpactFeedbackGenerator(style: .medium)
+                                    impact.impactOccurred()
+                                }
+                            }, perform: {
+                                let impact = UIImpactFeedbackGenerator(style: .heavy)
+                                impact.impactOccurred()
                                 pendingDelete = conv
-                            }
+                            })
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
