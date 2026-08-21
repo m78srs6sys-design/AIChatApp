@@ -674,8 +674,10 @@ final class OnlineSkillService {
 
     /// 汇总所有可用传感器数据（海拔/气压/指南针/步数/电池/内存/存储）。
     private func readAllSensors() async -> (description: String, success: Bool) {
-        let loc = LocationService.shared.currentLocation ?? await LocationService.shared.awaitLocation()
-        let heading = LocationService.shared.currentHeading ?? await LocationService.shared.awaitHeading()
+        var loc = LocationService.shared.currentLocation
+        if loc == nil { loc = await LocationService.shared.awaitLocation() }
+        var heading = LocationService.shared.currentHeading
+        if heading == nil { heading = await LocationService.shared.awaitHeading() }
         let headingDeg = heading.map { $0.trueHeading >= 0 ? $0.trueHeading : $0.magneticHeading }
         let snap = await SensorService.allSnapshot(altitude: loc?.altitude, headingDegrees: headingDeg)
         if snap.isEmpty {
