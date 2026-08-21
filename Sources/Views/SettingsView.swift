@@ -7,6 +7,10 @@ import AVFoundation
 
 struct SettingsView: View {
     @EnvironmentObject var settingsVM: SettingsViewModel
+    // 热更新：远程配置驱动的 UI 显隐/文案，与更新管理状态
+    @ObservedObject private var appConfig = AppConfig.shared
+    @ObservedObject private var hotUpdate = HotUpdateManager.shared
+    @State private var showHotResetConfirm = false
 
     /// 系统权限状态文本（位置 / 运动与健身 / 麦克风 / 通知）
     @State private var locationAuthText = "检测中…"
@@ -92,36 +96,135 @@ struct SettingsView: View {
                                 subtitle: "开启后，AI 可在需要时主动搜索、查天气、读网页、生成图片、操作设备",
                                 isOn: onlineFeaturesBinding
                             )
-                            Divider().background(AppTheme.divider)
-                            toggleRow(
-                                title: "AI 回复自动朗读",
-                                subtitle: "生成完成后自动用系统语音朗读（本地合成，无需网络）",
-                                isOn: ttsBinding
-                            )
-                            Divider().background(AppTheme.divider)
-                            toggleRow(
-                                title: "逐字震动反馈",
-                                subtitle: "生成每个字时触发极短震动（可在安静环境关闭）",
-                                isOn: hapticBinding
-                            )
+                            if AppConfig.shared.uiFlag("showTTS", fallback: true) {
+                                Divider().background(AppTheme.divider)
+                                toggleRow(
+                                    title: "AI 回复自动朗读",
+                                    subtitle: "生成完成后自动用系统语音朗读（本地合成，无需网络）",
+                                    isOn: ttsBinding
+                                )
+                            }
+                            if AppConfig.shared.uiFlag("showHapticToggle", fallback: true) {
+                                Divider().background(AppTheme.divider)
+                                toggleRow(
+                                    title: "逐字震动反馈",
+                                    subtitle: "生成每个字时触发极短震动（可在安静环境关闭）",
+                                    isOn: hapticBinding
+                                )
+                            }
                         }
                     }
 
-                    // 系统权限
-                    section(title: "系统权限") {
+                    // 热更新（GitHub 配置源 · 灰度 · 离线兜底）
+                    section(title: "热更新") {
                         VStack(spacing: 12) {
-                            Text("AI 调用传感器或系统操作前，都会先弹窗征求你的许可。这里可快速查看权限状态，点按任意一行前往系统设置管理。")
+                            Text("UI、主题、功能开关、权限说明、AI 工具与提示词都可远程更新、灰度发布，无需重装 App。默认使用内置更新源；也可填写你自己的 GitHub 仓库 raw 地址。")
                                 .font(.system(size: 12))
                                 .foregroundColor(AppTheme.tertiaryText)
                                 .fixedSize(horizontal: false, vertical: true)
-                            permissionRow(icon: "location.fill", title: "位置（海拔 / 指南针）", status: locationAuthText)
-                            Divider().background(AppTheme.divider)
-                            permissionRow(icon: "figure.walk", title: "运动与健身（步数 / 气压）", status: motionAuthText)
-                            Divider().background(AppTheme.divider)
-                            permissionRow(icon: "mic.fill", title: "麦克风（语音输入）", status: micAuthText)
-                            Divider().background(AppTheme.divider)
-                            permissionRow(icon: "bell.badge.fill", title: "通知（下载完成提醒）", status: notifAuthText)
-                            Divider().background(AppTheme.divider)
+
+                            // 更新源地址
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("更新源地址（留空 = 官方默认源）")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(AppTheme.secondaryText)
+                                TextField("留空使用官方源", text: $hotUpdate.customSourceURL)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(AppTheme.primaryText)
+                                    .padding(10)
+                                    .background(AppTheme.surface)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .strokeBorder(AppTheme.divider, lineWidth: 1)
+                                    )
+                                    .autocapitalization(.none)
+                                    .autocorrectionDisabled()
+                            }
+
+                            // 状态概览
+                            HStack(spacing: 8) {
+                                Image(systemName: appConfig.isRemote ? "arrow.triangle.2.circlepath" : "shippingbox.fill")
+                                    .font(.system(size: 15))
+                                    .foregroundColor(appConfig.isRemote ? AppTheme.success : AppTheme.secondaryText)
+                                Text("当前配置：\(hotUpdate.appliedRemoteVersion)（\(appConfig.isRemote ? "远程" : "出厂内置")）")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(AppTheme.primaryText)
+                                Spacer()
+                            }
+                            if hotUpdate.remoteVersion > 0 {
+                                HStack(spacing: 8) {
+                                    Text("线上最新：v\(hotUpdate.remoteVersion) · 灰度 \(hotUpdate.remoteRollout)%")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(AppTheme.tertiaryText)
+                                    if !hotUpdate.remoteNotes.isEmpty {
+                                        Text(hotUpdate.remoteNotes)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(AppTheme.tertiaryText)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                }
+                            }
+                            // 最近检查结果
+                            HStack(spacing: 8) {
+                                Text(hotUpdate.lastCheckResult)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(AppTheme.tertiaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                            }
+
+                            // 操作按钮
+                            HStack(spacing: 10) {
+                                Button {
+                                    Task { await hotUpdate.checkForUpdate(force: true) }
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        if hotUpdate.isChecking { ProgressView().tint(.white) }
+                                        Text(hotUpdate.isChecking ? "检查中…" : "立即检查更新")
+                                    }
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.vertical, 10)
+                                    .frame(maxWidth: .infinity)
+                                    .background(AppTheme.accent)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                }
+                                .disabled(hotUpdate.isChecking)
+
+                                Button {
+                                    showHotResetConfirm = true
+                                } label: {
+                                    Text("恢复出厂")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(AppTheme.warning)
+                                        .padding(.vertical, 10)
+                                        .frame(maxWidth: .infinity)
+                                        .background(AppTheme.warning.opacity(0.10))
+                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                }
+                            }
+                        }
+                    }
+                    .alert("恢复出厂配置？", isPresented: $showHotResetConfirm) {
+                        Button("取消", role: .cancel) {}
+                        Button("恢复", role: .destructive) { hotUpdate.resetToFactory() }
+                    } message: {
+                        Text("将清除已下载的远程配置，恢复为 App 出厂默认设置。功能开关、主题、提示词都会回到内置版本。")
+                    }
+
+                    // 系统权限（热更新：展示行可由远程配置增删改）
+                    section(title: "系统权限") {
+                        VStack(spacing: 12) {
+                            Text(appConfig.uiString("permissionIntro") ?? "AI 调用传感器或系统操作前，都会先弹窗征求你的许可。这里可快速查看权限状态，点按任意一行前往系统设置管理。")
+                                .font(.system(size: 12))
+                                .foregroundColor(AppTheme.tertiaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            ForEach(appConfig.permissionRows(), id: \.key) { row in
+                                permissionRow(icon: row.icon, title: row.title, status: permissionStatus(for: row.key))
+                                Divider().background(AppTheme.divider)
+                            }
                             Button {
                                 openSystemSettings()
                             } label: {
@@ -173,12 +276,13 @@ struct SettingsView: View {
                         }
                     }
 
-                    // 智能工具流程（可自定义）
-                    section(title: "智能工具流程（可自定义）") {
-                        VStack(spacing: 12) {
-                            Text("像搭积木一样组合工具：设定「什么场景 → 先做什么、再做什么」，AI 会按你设定的顺序调用工具。内置方案可改、可删、可新增。")
-                                .font(.system(size: 12))
-                                .foregroundColor(AppTheme.tertiaryText)
+                    // 智能工具流程（可自定义；热更新：showWorkflows 可隐藏）
+                    if AppConfig.shared.uiFlag("showWorkflows", fallback: true) {
+                        section(title: "智能工具流程（可自定义）") {
+                            VStack(spacing: 12) {
+                                Text("像搭积木一样组合工具：设定「什么场景 → 先做什么、再做什么」，AI 会按你设定的顺序调用工具。内置方案可改、可删、可新增。")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(AppTheme.tertiaryText)
                                 .fixedSize(horizontal: false, vertical: true)
 
                             ForEach(settingsVM.settings.workflows) { p in
@@ -251,6 +355,7 @@ struct SettingsView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
                         }
+                        }
                     }
 
                     // 保存按钮
@@ -321,6 +426,17 @@ struct SettingsView: View {
     }
 
     // MARK: - 系统权限状态
+
+    /// 根据远程配置的权限行 key 返回对应的本地状态文本（未知 key 显示通用文案）
+    private func permissionStatus(for key: String) -> String {
+        switch key {
+        case PermissionKey.location: return locationAuthText
+        case PermissionKey.motion: return motionAuthText
+        case PermissionKey.mic: return micAuthText
+        case PermissionKey.notification: return notifAuthText
+        default: return "点按前往系统设置"
+        }
+    }
 
     private func permissionRow(icon: String, title: String, status: String) -> some View {
         Button {
