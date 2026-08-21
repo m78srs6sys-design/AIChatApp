@@ -350,7 +350,7 @@ struct SettingsView: View {
 
     private func refreshPermissions() {
         // 位置
-        switch CLLocationManager().authorizationStatus() {
+        switch LocationService.shared.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways: locationAuthText = "已授权"
         case .denied, .restricted: locationAuthText = "已拒绝，点按前往设置"
         default: locationAuthText = "未请求（AI 用到时询问）"
