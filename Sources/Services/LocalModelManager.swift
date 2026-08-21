@@ -1,10 +1,14 @@
 import Foundation
 import Combine
 import UserNotifications
+import CryptoKit
 
 /// 本地模型下载管理：后台下载、断点续传、删除、进度通知、Live Activity。
 /// 支持分片 GGUF（如 -00001-of-00002.gguf）：每个分片独立下载到同一目录，
 /// llama.cpp 加载时会自动合并分片；模型「已下载」状态 = 所有分片均存在。
+///
+/// 完整性校验：每个分片下载完成后计算 SHA256 存入本地；打开「模型管理」页时
+/// 自动重算对比，发现损坏（半截文件/被篡改）立即删除并显示为「未下载」。
 final class LocalModelManager: NSObject, ObservableObject {
     static let shared = LocalModelManager()
 
@@ -22,6 +26,12 @@ final class LocalModelManager: NSObject, ObservableObject {
     /// 云端列表拉取状态
     @Published var isRefreshingRemote = false
     @Published var remoteLoadError: String?
+    /// 完整性校验状态
+    @Published var isVerifying = false
+    @Published var verificationMessage: String?
+
+    /// 文件 SHA256 基准（key = 文件名，value = 下载完成时计算的哈希，用于完整性校验）
+    private var fileHashes: [String: String] = [:]
 
     /// 由系统保存的后台下载完成回调（App 从后台唤醒时调用它，防止后台任务一直挂起）
     private var backgroundCompletion: (() -> Void)?
@@ -51,10 +61,115 @@ final class LocalModelManager: NSObject, ObservableObject {
     override init() {
         super.init()
         activeModelId = PersistenceManager.shared.loadActiveModelId()
+        loadFileHashes()
         rebuildDownloadStates()
         loadResumeData()
         requestNotificationPermission()
         restoreBackgroundTasks()
+    }
+
+    // MARK: - 文件哈希（完整性校验）
+
+    private static let fileHashesKey = "local_model_file_hashes"
+
+    private func loadFileHashes() {
+        if let data = UserDefaults.standard.data(forKey: Self.fileHashesKey),
+           let dict = try? JSONDecoder().decode([String: String].self, from: data) {
+            fileHashes = dict
+        }
+    }
+
+    private func saveFileHashes() {
+        if let data = try? JSONEncoder().encode(fileHashes) {
+            UserDefaults.standard.set(data, forKey: Self.fileHashesKey)
+        }
+    }
+
+    /// 计算文件 SHA256（流式读取，内存占用恒定；耗时随文件大小，适合后台）
+    static func sha256(of url: URL, chunkSize: Int = 1 << 20) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            let data = handle.readData(ofLength: chunkSize)
+            if data.isEmpty { break }
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 校验所有已下载模型的完整性；发现损坏文件立即删除并显示「未下载」。
+    /// 旧版本下载的文件没有哈希基准 → 首次校验时建立基准（视为完好）。
+    func verifyAllModels() async {
+        guard !isVerifying else { return }
+        isVerifying = true
+        verificationMessage = nil
+        defer { isVerifying = false }
+
+        var all = LocalModelCatalog.models
+        for m in remoteModels where !all.contains(where: { $0.id == m.id }) {
+            all.append(m)
+        }
+
+        var removedCount = 0
+        var firstRunCount = 0
+
+        for model in all where isDownloaded(model) {
+            for part in model.files {
+                let url = partPath(for: part)
+                guard FileManager.default.fileExists(atPath: url.path) else { continue }
+                let computed = await Task.detached(priority: .utility) {
+                    Self.sha256(of: url)
+                }.value
+                guard let computed else { continue }
+
+                await MainActor.run {
+                    if let stored = fileHashes[part.filename] {
+                        if stored != computed {
+                            // 文件损坏：删除该分片 + 清断点，模型将显示「未下载」
+                            try? FileManager.default.removeItem(at: url)
+                            downloadAuthoritativeState(for: model.id)
+                        }
+                    } else {
+                        // 首次建立基准
+                        fileHashes[part.filename] = computed
+                        saveFileHashes()
+                        firstRunCount += 1
+                    }
+                }
+            }
+        }
+
+        // 统计：损坏文件影响到的模型数量（重新扫一遍状态）
+        await MainActor.run {
+            var resetModels = 0
+            for model in all {
+                if !isDownloaded(model) {
+                    if let prev = downloads[model.id], prev.status == .completed {
+                        resetModels += 1
+                    }
+                    downloads[model.id] = DownloadState(downloaded: false, progress: 0, status: .idle)
+                }
+            }
+            removedCount = resetModels
+            if removedCount > 0 {
+                verificationMessage = "⚠️ 发现 \(removedCount) 个模型文件损坏，已自动删除，请重新下载"
+            } else if firstRunCount > 0 {
+                verificationMessage = "✅ 模型完整性检查完成（为新下载文件建立了校验基准）"
+            } else {
+                verificationMessage = "✅ 模型完整性检查通过"
+            }
+        }
+    }
+
+    /// 去掉该模型的所有已下载状态（清除哈希与缓存）
+    private func downloadAuthoritativeState(for modelId: String) {
+        downloads[modelId] = DownloadState(downloaded: false, progress: 0, status: .idle)
+        for key in tasks.keys where key.hasPrefix(modelId + "||") {
+            resumeData[key] = nil
+            tasks[key]?.cancel()
+            tasks[key] = nil
+        }
     }
 
     // MARK: - 状态同步
@@ -211,8 +326,10 @@ final class LocalModelManager: NSObject, ObservableObject {
             let fileKey = Self.taskKey(modelId: model.id, filename: part.filename)
             try? FileManager.default.removeItem(at: partPath(for: part))
             resumeData[fileKey] = nil
+            fileHashes[part.filename] = nil
         }
         saveResumeData()
+        saveFileHashes()
         downloads[model.id] = DownloadState(downloaded: false, progress: 0, status: .idle)
         if activeModelId == model.id {
             activeModelId = nil
@@ -389,6 +506,14 @@ extension LocalModelManager: URLSessionDownloadDelegate {
                 }
                 self.notifyDownloadComplete(model: model)
                 self.finishBackgroundIfIdle()
+                // 后台计算该分片 SHA256 作为完整性基准（大文件需几秒，不阻塞 UI）
+                Task.detached(priority: .utility) { [weak self] in
+                    guard let self, let hash = Self.sha256(of: dest) else { return }
+                    DispatchQueue.main.async {
+                        self.fileHashes[filename] = hash
+                        self.saveFileHashes()
+                    }
+                }
             } else {
                 // 还有分片未完成，保持下载中
                 self.downloads[modelId]?.status = .downloading
