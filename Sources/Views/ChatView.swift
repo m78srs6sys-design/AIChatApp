@@ -20,6 +20,9 @@ struct ChatView: View {
     @State private var selectedIDs: Set<UUID> = []
     // 自动滚动防重入：流式输出时避免每个 token 都触发 scrollTo 造成更新期重入崩溃
     @State private var autoScrollBusy = false
+    // 生成时可手动滚动：记录用户是否停在底部；一旦用户上滑离开底部，自动滚动暂停，回到底部后恢复跟随
+    @State private var bottomHintY: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
 
     private var activeModel: LocalModel? {
         guard let id = modelManager.activeModelId else { return nil }
@@ -192,33 +195,95 @@ struct ChatView: View {
 
     // MARK: - Message List
     private var messageList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    if messages.isEmpty {
-                        emptyState
+        GeometryReader { geo in
+            ScrollViewReader { proxy in
+                ZStack(alignment: .bottomTrailing) {
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            // 顶部锚点：悬浮「回到顶部」按钮跳转目标（多条消息时列表可能很长）
+                            Color.clear.frame(height: 1).id("topAnchor")
+                            if messages.isEmpty {
+                                emptyState
+                            }
+                            ForEach(messages) { msg in
+                                bubble(for: msg)
+                                    .id(msg.id)
+                            }
+                            // 底部锚点：用于检测当前是否停在底部（决定自动滚动是否跟随）
+                            Color.clear.frame(height: 1)
+                                .id("bottomHint")
+                                .background(
+                                    GeometryReader { pin in
+                                        Color.clear.preference(
+                                            key: BottomHintYPreferenceKey.self,
+                                            value: pin.frame(in: .named("chatScroll")).minY
+                                        )
+                                    }
+                                )
+                        }
+                        .padding(.vertical, 12)
                     }
-                    ForEach(messages) { msg in
-                        bubble(for: msg)
-                            .id(msg.id)
+                    .scrollDismissesKeyboard(.immediately)
+                    // 悬浮「回到顶部」按钮：仅当用户离开底部时出现
+                    topFloatButton(proxy)
+                }
+                .coordinateSpace(name: "chatScroll")
+                .onPreferenceChange(BottomHintYPreferenceKey.self) { bottomHintY = $0 }
+                .onAppear {
+                    viewportHeight = geo.size.height
+                    // 打开 App 自动滑到最近对话最底部
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        scrollToBottom(proxy)
                     }
                 }
-                .padding(.vertical, 12)
-            }
-            .scrollDismissesKeyboard(.immediately)
-            .onAppear {
-                // 打开 App 自动滑到最近对话最底部
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    scrollToBottom(proxy)
+                .onChange(of: geo.size.height) { _ in
+                    viewportHeight = geo.size.height
                 }
-            }
-            .onChange(of: messages.count) { _ in
-                scrollToBottom(proxy)
-            }
-            .onChange(of: messages.last?.content) { _ in
-                scrollToBottom(proxy)
+                .onChange(of: messages.count) { _ in
+                    // 用户已经手动翻到上面时，不强制跳底（允许生成过程中自由浏览）
+                    if isAtBottom { scrollToBottom(proxy) }
+                }
+                .onChange(of: messages.last?.content) { _ in
+                    if isAtBottom { scrollToBottom(proxy) }
+                }
             }
         }
+    }
+
+    /// 当前视口是否停在底部：底部锚点顶部进入视口底部 20pt 内即认为在底部。
+    /// viewportHeight 尚未拿到时（初次布局）默认视为底部，避免首屏自动滚动被误吞。
+    private var isAtBottom: Bool {
+        guard viewportHeight > 0 else { return true }
+        return bottomHintY <= viewportHeight + 20
+    }
+
+    /// 悬浮「回到顶部」按钮（右下角）
+    private func topFloatButton(_ proxy: ScrollViewProxy) -> some View {
+        Group {
+            if !isAtBottom && !messages.isEmpty && !selectionMode {
+                Button {
+                    withAnimation(.easeOut(duration: 0.28)) {
+                        proxy.scrollTo("topAnchor", anchor: .top)
+                    }
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(AppTheme.primaryText)
+                        .frame(width: 42, height: 42)
+                        .background(AppTheme.surfaceElevated)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle().strokeBorder(AppTheme.divider.opacity(0.6), lineWidth: 1)
+                        )
+                        .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 3)
+                }
+                .buttonStyle(BounceButtonStyle())
+                .transition(.scale(scale: 0.7).combined(with: .opacity))
+                .padding(.trailing, 14)
+                .padding(.bottom, 12)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isAtBottom)
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
@@ -429,4 +494,13 @@ struct ShareSheet: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+/// 上报底部锚点在「chatScroll」坐标系中的 minY，用于判断用户是否停留在对话底部。
+/// 只在滚动位置变化时更新一次（只读，无副作用）。
+private struct BottomHintYPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = .greatestFiniteMagnitude
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
 }
