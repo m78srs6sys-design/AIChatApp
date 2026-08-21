@@ -528,12 +528,18 @@ final class OnlineSkillService {
         return WebpageSummary(url: url, title: title, summary: String(text.prefix(8000)))
     }
 
-    // MARK: - 系统 API 操作（亮度/音量/手电筒/设置跳转等）
+    // MARK: - 系统 API 操作（亮度/音量/手电筒/设置跳转/打开 App 等）
     /// 执行系统级操作。返回 (操作描述, 是否成功)。
     /// 智能匹配中文口语（如"调节屏幕亮度到50%"）与英文命令（brightness 0.5）。
+    /// 支持：URL 打开（http(s):// 或自定义 scheme）→ 打开对应 App 或其指定界面。
     func executeSystemAction(command: String) async -> (description: String, success: Bool) {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let cmd = trimmed.lowercased()
+
+        // 0) 直接给 URL / scheme（http://、https://、weixin://、open 微信 等）→ 打开 App 或指定页面
+        if let url = Self.extractOpenURL(from: trimmed, cmd: cmd) {
+            return await openExternalURL(url)
+        }
 
         // 亮度（英文或中文包含"亮度"）
         if cmd.hasPrefix("brightness") || cmd.contains("亮度") {
@@ -567,7 +573,76 @@ final class OnlineSkillService {
         if cmd.contains("声音") || cmd.contains("铃声") {
             return await openSystemSettings(path: "Sounds", manual: "请手动调节铃声与提醒")
         }
-        return ("未知系统操作「\(command)」。支持：亮度 50%、音量 50%、手电筒开/关、低电量、wifi、蓝牙、显示、声音", false)
+        return ("未知系统操作「\(command)」。支持：打开 XX app、https://链接、亮度 50%、音量 50%、手电筒开/关、低电量、wifi、蓝牙、显示、声音", false)
+    }
+
+    /// 从命令中解析出要打开的 URL / App scheme。
+    /// 识别：纯 URL（http/https）、"url:xxx"、"open xxx"、"打开 xxx"（映射常用 App scheme 表）。
+    private static func extractOpenURL(from trimmed: String, cmd: String) -> URL? {
+        if cmd.hasPrefix("http://") || cmd.hasPrefix("https://") {
+            return URL(string: trimmed)
+        }
+        if cmd.hasPrefix("url:") {
+            let u = trimmed.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
+            return URL(string: u)
+        }
+        // "打开 XX" / "open XX" / "去 XX" → 匹配常用 App scheme
+        let lowered = trimmed.lowercased()
+        var target: String?
+        if let range = lowered.range(of: "打开") {
+            target = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let range = lowered.range(of: "open ") {
+            target = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let range = lowered.range(of: "去") {
+            target = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let target, !target.isEmpty else { return nil }
+
+        // 常见 App 的 URL scheme（打开 App 或直达指定页面）
+        let appSchemes: [(name: String, scheme: String)] = [
+            ("微信", "weixin://"), ("微信支付", "weixinpay://"), ("WeChat", "weixin://"),
+            ("QQ", "mqq://"), ("QQ空间", "mqzone://"),
+            ("支付宝", "alipay://"), ("Alipay", "alipay://"),
+            ("抖音", "snssdk1128://"), ("Douyin", "snssdk1128://"),
+            ("小红书", "xhsdiscover://"), ("XHS", "xhsdiscover://"),
+            ("微博", "weibo://"), ("Weibo", "weibo://"),
+            ("淘宝", "taobao://"), ("Taobao", "taobao://"),
+            ("京东", "openapp.jdmobile://"), ("JD", "openapp.jdmobile://"),
+            ("拼多多", "pinduoduo://"), ("PDD", "pinduoduo://"),
+            ("哔哩哔哩", "bilibili://"), ("B站", "bilibili://"), ("BiliBili", "bilibili://"),
+            ("美团", "imeituan://"), ("Meituan", "imeituan://"),
+            ("饿了么", "eleme://"), ("Eleme", "eleme://"),
+            ("高德地图", "iosamap://"), ("高德", "iosamap://"), ("Amap", "iosamap://"),
+            ("百度地图", "baidumap://"), ("BaiduMap", "baidumap://"),
+            ("网易云音乐", "orpheus://"), ("网易云", "orpheus://"), ("CloudMusic", "orpheus://"),
+            ("QQ音乐", "qqmusic://"), ("QQMusic", "qqmusic://"),
+            ("爱奇艺", "iqiyi://"), ("Iqiyi", "iqiyi://"),
+            ("腾讯视频", "tenvideo://"), ("TencentVideo", "tenvideo://"),
+            ("优酷", "youku://"), ("Youku", "youku://"),
+            ("知乎", "zhihu://"), ("Zhihu", "zhihu://"),
+            ("百度", "baiduboxapp://"), ("Baidu", "baiduboxapp://"),
+            ("钉钉", "dingtalk://"), ("DingTalk", "dingtalk://"),
+            ("企业微信", "wxwork://"), ("WeCom", "wxwork://"),
+        ]
+        for app in appSchemes {
+            if target.contains(app.name) || app.name.contains(target) || target.hasPrefix(app.name) {
+                return URL(string: app.scheme)
+            }
+        }
+        return nil
+    }
+
+    /// 打开外部 URL / App scheme（直接 open，不依赖 canOpenURL，避免 LSApplicationQueriesSchemes 限制）
+    private func openExternalURL(_ url: URL) async -> (description: String, success: Bool) {
+        let done = await withTimeout(5) {
+            await MainActor.run {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+        } != nil
+        if done {
+            return ("已打开「\(url.absoluteString)」", true)
+        }
+        return ("打开失败：\(url.absoluteString)", false)
     }
 
     /// 从命令中提取数值：支持 "50"、"50%"、"0.5"、"50 %" 等
