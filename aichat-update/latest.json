@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "minAppVersion": 26,
+  "rollout": 100,
+  "channel": "stable",
+  "notes": "出厂基线配置：全部功能开启，使用内置默认主题与提示词",
+  "ui": {
+    "showPDFExport": true,
+    "showClearButton": true,
+    "showWorkflows": true,
+    "showCrashLogs": true,
+    "showHapticToggle": true,
+    "showTTS": true
+  },
+  "features": {
+    "htmlCard": true,
+    "imageGen": true,
+    "imageSearch": true,
+    "search": true,
+    "weather": true,
+    "web": true,
+    "location": true,
+    "systemOps": true,
+    "sensorAll": true,
+    "cardOnAll": true
+  },
+  "permissions": {
+    "rows": [
+      { "key": "location", "icon": "location.fill", "title": "位置（海拔 / 指南针）" },
+      { "key": "motion", "icon": "figure.walk", "title": "运动与健身（步数 / 气压）" },
+      { "key": "mic", "icon": "mic.fill", "title": "麦克风（语音输入）" },
+      { "key": "notification", "icon": "bell.badge.fill", "title": "通知（下载完成提醒）" }
+    ]
+  },
+  "tools": ["search", "weather", "web", "image", "imagesearch", "location", "system", "card"]
+}
