@@ -3,6 +3,15 @@ import Combine
 import SwiftUI
 import UIKit
 
+/// 系统操作许可弹窗内容（每次调用「系统操作」工具前征求用户许可）
+struct SystemPermissionRequest: Identifiable {
+    let id = UUID()
+    /// AI 要执行的原始命令
+    let command: String
+    /// 中文「人话」解释：AI 想做什么
+    let explanation: String
+}
+
 @MainActor
 final class ChatViewModel: ObservableObject {
     @Published var inputText: String = ""
@@ -13,6 +22,11 @@ final class ChatViewModel: ObservableObject {
     @Published var isPlayingAudio: Bool = false
     /// 逐字震动开关（来自设置）
     var enableCharHaptic = false
+
+    /// 待用户确认的系统操作许可弹窗（每次调用「系统操作」工具前弹出）
+    @Published var systemPermissionRequest: SystemPermissionRequest?
+    /// 弹窗响应续体：等待用户在弹窗上选择「允许 / 不许可」
+    private var permissionContinuation: CheckedContinuation<Bool, Never>?
 
     let store = ConversationStore.shared
     private let onlineEngine = OnlineChatEngine()
@@ -167,6 +181,10 @@ final class ChatViewModel: ObservableObject {
                 · 设置跳转类：低电量 / wifi / 蓝牙 / 显示 / 声音
                 · 打开其它 App：写「打开 微信」/「打开 地图」/「打开 哔哩哔哩」等（支持微信、QQ、支付宝、抖音、小红书、微博、淘宝、京东、拼多多、B站、美团、饿了么、高德、百度地图、网易云音乐、QQ音乐、爱奇艺、腾讯视频、知乎等）
                 · 打开任意网址或指定界面：直接写 URL，如 <system>https://mp.weixin.qq.com</system> 或 <system>https://www.bilibili.com/video/</system>
+                · 传感器读数类（只读，无需修改任何设置）：海拔（当前位置高度）、气压（气压计）、指南针（朝向角度）、步数（今日）、电池（电量%）、内存、存储剩余空间，也可写「所有传感器」一次汇总读取
+                【许可机制 · 重要】
+                - 每次调用 <system> 工具，系统都会先弹出中文确认框征求用户许可；若用户点了「不许可」，你会收到「用户没有许可」的反馈，此时请尊重用户意愿，不要再尝试该系统操作，改用不需要系统权限的方式回答或给出替代建议。
+                - 遇到"我在哪/多高/现在几度（气压）/朝哪个方向/走了多少步/电量多少/内存存储够不够"等问题时，主动用 <system> 读取对应传感器数据来回答。
 
             【可视化卡片 <card>】
             - 位置 / 天气 / 网页 / 搜索结果 的工具结果会自动渲染成卡片，不要用 <card> 重复生成相同内容（否则会出现两张卡，很奇怪）。
@@ -513,13 +531,115 @@ final class ChatViewModel: ObservableObject {
             return ([.htmlCard(html: fallbackHTML)], "[可视化卡片已生成]")
 
         case "system":
-            let (desc, _) = await skillService.executeSystemAction(command: content)
+            // 使用前必须征求用户许可（中文弹窗）；用户不许可则反馈给 AI，让它在深度思考中继续别的方案
+            let allowed = await requestSystemPermission(for: content)
+            if !allowed {
+                let att = MessageAttachment.systemAction(action: content, description: "用户未授权")
+                return ([att], "⚠️ 用户没有许可当前系统操作「\(content)」。请不要执行该系统操作，尊重用户意愿：要么改用不需要系统权限的方式完成回答，要么直接给出替代建议。")
+            }
+            let (desc, ok) = await skillService.executeSystemAction(command: content)
             let att = MessageAttachment.systemAction(action: content, description: desc)
-            return ([att], "系统操作「\(content)」：\(desc)")
+            return ([att], "系统操作「\(content)」：\(desc)\(ok ? "" : "（执行失败）")")
 
         default:
             return ([], "")
         }
+    }
+
+    // MARK: - 系统操作许可弹窗
+
+    /// 在调用「系统操作」工具前征求用户许可（中文「人话」弹窗）。
+    /// - Returns: true=用户允许执行；false=用户不许可（或 App 在后台无法弹窗，自动视为不许可避免任务挂死）。
+    private func requestSystemPermission(for command: String) async -> Bool {
+        let explanation = Self.humanizeSystemCommand(command)
+        // App 在后台时无法弹窗：直接视为不许可，防止生成任务永久挂起
+        if UIApplication.shared.applicationState != .active {
+            return false
+        }
+        return await withCheckedContinuation { continuation in
+            permissionContinuation = continuation
+            systemPermissionRequest = SystemPermissionRequest(command: command, explanation: explanation)
+        }
+    }
+
+    /// 用户在许可弹窗上做出选择：true=允许，false=不许可
+    func respondToPermission(granted: Bool) {
+        systemPermissionRequest = nil
+        permissionContinuation?.resume(returning: granted)
+        permissionContinuation = nil
+    }
+
+    /// 把系统操作命令翻译成中文「人话」，用于弹窗与 AI 反馈文案。
+    static func humanizeSystemCommand(_ command: String) -> String {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cmd = trimmed.lowercased()
+
+        // 1) 设备操控类（严格优先于「打开」判断，避免把"打开手电筒"误判为打开 App）
+        if cmd.hasPrefix("torch") || cmd.contains("手电筒") || cmd.contains("闪光灯") || cmd.contains("电筒") {
+            return cmd.contains("off") || cmd.contains("关") ? "关闭手电筒（闪光灯）" : "打开手电筒（闪光灯）"
+        }
+        if cmd.hasPrefix("brightness") || cmd.contains("亮度") {
+            return "调整屏幕亮度"
+        }
+        if cmd.hasPrefix("volume") || cmd.contains("音量") {
+            return "调整系统音量"
+        }
+        // 2) 系统设置类
+        if cmd.contains("低电量") || cmd.contains("省电") || cmd.contains("低功耗") {
+            return "打开低电量模式设置页面"
+        }
+        if cmd.contains("wifi") || cmd.contains("无线") {
+            return "打开 Wi-Fi 设置页面"
+        }
+        if cmd.contains("蓝牙") {
+            return "打开蓝牙设置页面"
+        }
+        if cmd.contains("显示") || cmd.contains("屏幕") {
+            return "打开显示与亮度设置页面"
+        }
+        if cmd.contains("声音") || cmd.contains("铃声") {
+            return "打开声音与触感设置页面"
+        }
+        // 3) 打开网页 / App
+        if cmd.hasPrefix("http://") || cmd.hasPrefix("https://") {
+            return "打开网页 \(trimmed.prefix(50))"
+        }
+        if cmd.hasPrefix("url:") || cmd.hasPrefix("打开") || cmd.hasPrefix("open ") || cmd.hasPrefix("去 ") {
+            let target = trimmed
+                .replacingOccurrences(of: "请", with: "")
+                .replacingOccurrences(of: "帮我", with: "")
+                .replacingOccurrences(of: "打开", with: "")
+                .replacingOccurrences(of: "open ", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "去", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return "打开" + (target.isEmpty ? "这个 App" : "「\(target)」App 或页面")
+        }
+        // 4) 传感器读数（只读，无副作用）
+        if cmd.contains("海拔") || cmd.hasPrefix("altitude") || cmd.contains("高度") {
+            return "读取你的当前位置海拔（GPS 高度）"
+        }
+        if cmd.contains("气压") || cmd.contains("压强") || cmd.hasPrefix("barometer") {
+            return "读取当前气压数据（气压计）"
+        }
+        if cmd.contains("指南针") || cmd.contains("朝向") || cmd.hasPrefix("heading") {
+            return "读取当前朝向（指南针）"
+        }
+        if cmd.contains("步数") || cmd.hasPrefix("steps") {
+            return "读取今日步数（运动与健身数据）"
+        }
+        if cmd.contains("电池") || cmd.contains("电量") || cmd.hasPrefix("battery") {
+            return "读取电池电量与充电状态"
+        }
+        if cmd.contains("内存") || cmd.hasPrefix("memory") {
+            return "读取内存占用情况"
+        }
+        if cmd.contains("存储") || cmd.contains("空间") || cmd.hasPrefix("storage") {
+            return "读取设备存储剩余空间"
+        }
+        if cmd.contains("所有传感器") || cmd == "sensors" || cmd.contains("传感器总览") {
+            return "读取设备所有传感器数据（海拔、气压、指南针、步数、电量等）"
+        }
+        return "执行系统操作「\(trimmed.isEmpty ? command : trimmed)」"
     }
 
     /// 用「另一个 AI」根据内容描述生成 HTML 卡片代码。
