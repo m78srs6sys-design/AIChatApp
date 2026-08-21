@@ -250,6 +250,18 @@ final class AppConfig: ObservableObject {
         return remoteOverride
     }
 
+    /// 追加在 system prompt 尾部的远程说明（如「打开 App 必须写全名」等约束）
+    func systemPromptSuffix() -> String? {
+        guard let s = remote?.systemPromptSuffix, !s.isEmpty else { return nil }
+        return s
+    }
+
+    /// 远程「打开 App」别名表（优先于内置表匹配；nil = 使用内置表）
+    func appSchemes() -> [AppSchemeConfig]? {
+        guard let list = remote?.appSchemes, !list.isEmpty else { return nil }
+        return list
+    }
+
     // MARK: - 主题（AppTheme 读取）
 
     func themeColor(_ key: String) -> Color? {
