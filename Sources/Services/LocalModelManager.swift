@@ -123,25 +123,29 @@ final class LocalModelManager: NSObject, ObservableObject {
                 }.value
                 guard let computed else { continue }
 
-                await MainActor.run {
+                // 主队列里做删除/存哈希；结果用返回值带出，避免并发闭包捕获修改
+                let r = await MainActor.run { () -> (removed: Bool, firstRun: Bool) in
                     if let stored = fileHashes[part.filename] {
                         if stored != computed {
                             // 文件损坏：删除该分片 + 清断点，模型将显示「未下载」
                             try? FileManager.default.removeItem(at: url)
                             downloadAuthoritativeState(for: model.id)
+                            return (true, false)
                         }
-                    } else {
-                        // 首次建立基准
-                        fileHashes[part.filename] = computed
-                        saveFileHashes()
-                        firstRunCount += 1
+                        return (false, false)
                     }
+                    // 首次建立基准
+                    fileHashes[part.filename] = computed
+                    saveFileHashes()
+                    return (false, true)
                 }
+                if r.removed { removedCount += 1 } else if r.firstRun { firstRunCount += 1 }
             }
         }
 
         // 统计：损坏文件影响到的模型数量（重新扫一遍状态）
-        await MainActor.run {
+        let firstRuns = firstRunCount
+        let msg = await MainActor.run { () -> String in
             var resetModels = 0
             for model in all {
                 if !isDownloaded(model) {
@@ -151,15 +155,14 @@ final class LocalModelManager: NSObject, ObservableObject {
                     downloads[model.id] = DownloadState(downloaded: false, progress: 0, status: .idle)
                 }
             }
-            removedCount = resetModels
-            if removedCount > 0 {
-                verificationMessage = "⚠️ 发现 \(removedCount) 个模型文件损坏，已自动删除，请重新下载"
-            } else if firstRunCount > 0 {
-                verificationMessage = "✅ 模型完整性检查完成（为新下载文件建立了校验基准）"
-            } else {
-                verificationMessage = "✅ 模型完整性检查通过"
+            if resetModels > 0 {
+                return "⚠️ 发现 \(resetModels) 个模型文件损坏，已自动删除，请重新下载"
+            } else if firstRuns > 0 {
+                return "✅ 模型完整性检查完成（为新下载文件建立了校验基准）"
             }
+            return "✅ 模型完整性检查通过"
         }
+        verificationMessage = msg
     }
 
     /// 去掉该模型的所有已下载状态（清除哈希与缓存）
