@@ -698,9 +698,8 @@ final class OnlineSkillService {
 
     /// 从命令中解析出要打开的 URL / App scheme。
     /// 识别：纯 URL（http/https）、"url:xxx"、"open xxx"、"打开 xxx"（映射常用 App scheme 表）。
-    /// 热更新 v28：匹配名先做规范化（小写/去空格/去「App」后缀），
-    /// 先查远程别名表（AppConfig.appSchemes，可热更新扩展），再查内置表；
-    /// 全部使用可选绑定，任何异常输入都安全返回 nil（不闪退）。
+    /// 匹配名先做规范化（小写/去空格/去「App」后缀），再用两级匹配（精确/前缀 → 包含），
+    /// 避免「高德地图」被「地图」吞掉；全部使用可选绑定，任何异常输入都安全返回 nil（不闪退）。
     private static func extractOpenURL(from trimmed: String, cmd: String) -> URL? {
         if cmd.hasPrefix("http://") || cmd.hasPrefix("https://") {
             return URL(string: trimmed)
@@ -754,16 +753,11 @@ final class OnlineSkillService {
             return nil
         }
 
-        // 1) 远程热更新别名表（优先；可随时下发新增 App 支持，无需重装）
-        if let remoteList = AppConfig.shared.appSchemes() {
-            let converted = remoteList.map { (name: $0.name, scheme: $0.scheme) }
-            if let url = match(converted) { return url }
-        }
-        // 2) 内置表
+        // 内置「打开 App」别名表
         return match(Self.builtinAppSchemes)
     }
 
-    /// 内置「打开 App」scheme 表（热更新 alias 表可扩展此表；此处按 name 长度降序保证长名优先）
+    /// 内置「打开 App」scheme 表（按 name 长度降序保证长名优先）
     private static let builtinAppSchemes: [(name: String, scheme: String)] = {
         let list: [(String, String)] = [
             // 第三方 App
