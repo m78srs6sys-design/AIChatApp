@@ -145,9 +145,10 @@ final class LocalModelManager: NSObject, ObservableObject {
 
         // 统计：损坏文件影响到的模型数量（重新扫一遍状态）
         let firstRuns = firstRunCount
+        let modelsToScan = all
         let msg = await MainActor.run { () -> String in
             var resetModels = 0
-            for model in all {
+            for model in modelsToScan {
                 if !isDownloaded(model) {
                     if let prev = downloads[model.id], prev.status == .completed {
                         resetModels += 1
