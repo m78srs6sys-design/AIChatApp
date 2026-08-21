@@ -599,7 +599,7 @@ final class OnlineSkillService {
             return await readStorage()
         }
         // 读取类操作（无副作用）统一兜底文案
-        return ("未知系统操作「\(command)」。支持：打开 XX app、https://链接、亮度 50%、音量 50%、手电筒开/关、低电量、wifi、蓝牙、显示、声音；传感器：海拔、气压、指南针、步数、电池、内存、存储、所有传感器", false)
+        return ("无法识别系统操作「\(command)」。提示：如果要打开某个 App，请给出完整准确的名称（如「打开 微信支付」「打开 高德地图」，不要只说简称或模糊描述）；支持的操作有：打开 XX app、https://链接、亮度 50%、音量 50%、手电筒开/关、低电量、wifi、蓝牙、显示、声音；传感器：海拔、气压、指南针、步数、电池、内存、存储、所有传感器", false)
     }
 
     // MARK: - 传感器读数（只读，无副作用）
@@ -612,11 +612,15 @@ final class OnlineSkillService {
         } else {
             loc = await LocationService.shared.awaitLocation()
         }
+        if let loc, abs(loc.altitude) > 0.5 {   // verticalAccuracy >= 0 时不代表有真实高度，改为幅度判定
+            return (String(format: "当前海拔约 %.0f 米（GPS 高度）", loc.altitude), true)
+        }
+        // 明确诊断：权限问题 / 定位失败 / 无高度数据
+        if let err = LocationService.shared.lastErrorText {
+            return ("无法读取海拔：\(err)", false)
+        }
         if let loc {
-            let alt = loc.altitude
-            if abs(alt) > 0.1 || loc.verticalAccuracy >= 0 {
-                return (String(format: "当前海拔约 %.0f 米（GPS 高度）", alt), true)
-            }
+            return ("当前已定位但暂无有效高度数据（GPS 高度不可用，常见于室内或 Wi-Fi 定位）", false)
         }
         return ("无法读取海拔：需要位置权限，或当前定位信号中暂无高度数据", false)
     }
@@ -640,6 +644,9 @@ final class OnlineSkillService {
         if let heading {
             let deg = heading.trueHeading >= 0 ? heading.trueHeading : heading.magneticHeading
             return (String(format: "当前朝向：%@（%.0f°）", SensorService.headingDirection(deg), deg), true)
+        }
+        if let err = LocationService.shared.lastErrorText {
+            return ("无法读取朝向：\(err)", false)
         }
         return ("无法读取朝向：需要位置权限，或设备没有指南针", false)
     }
@@ -691,6 +698,9 @@ final class OnlineSkillService {
 
     /// 从命令中解析出要打开的 URL / App scheme。
     /// 识别：纯 URL（http/https）、"url:xxx"、"open xxx"、"打开 xxx"（映射常用 App scheme 表）。
+    /// 热更新 v28：匹配名先做规范化（小写/去空格/去「App」后缀），
+    /// 先查远程别名表（AppConfig.appSchemes，可热更新扩展），再查内置表；
+    /// 全部使用可选绑定，任何异常输入都安全返回 nil（不闪退）。
     private static func extractOpenURL(from trimmed: String, cmd: String) -> URL? {
         if cmd.hasPrefix("http://") || cmd.hasPrefix("https://") {
             return URL(string: trimmed)
@@ -699,7 +709,7 @@ final class OnlineSkillService {
             let u = trimmed.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
             return URL(string: u)
         }
-        // "打开 XX" / "open XX" / "去 XX" → 匹配常用 App scheme
+        // "打开 XX" / "open XX" / "去 XX" → 匹配 App scheme
         let lowered = trimmed.lowercased()
         var target: String?
         if let range = lowered.range(of: "打开") {
@@ -711,12 +721,56 @@ final class OnlineSkillService {
         }
         guard let target, !target.isEmpty else { return nil }
 
-        // 常见 App 的 URL scheme（打开 App 或直达指定页面）
-        let appSchemes: [(name: String, scheme: String)] = [
-            ("微信", "weixin://"), ("微信支付", "weixinpay://"), ("WeChat", "weixin://"),
-            ("QQ", "mqq://"), ("QQ空间", "mqzone://"),
+        // 规范化：去自定义 app 名的常见干扰（空格、括号注释、"App/APP/app" 后缀）
+        func normalize(_ s: String) -> String {
+            var t = s.lowercased()
+                .replacingOccurrences(of: "（.*?）", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "\\(.*?\\)", with: "", options: .regularExpression)
+            for suffix in ["app", "appp", "应用", "客户端", "了"] {
+                if t.hasSuffix(suffix), t.count > suffix.count + 1 {
+                    t = String(t.dropLast(suffix.count))
+                }
+            }
+            return t.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let tn = normalize(target)
+        guard !tn.isEmpty else { return nil }
+
+        func match(_ list: [(name: String, scheme: String)]) -> URL? {
+            let names = list.map { normalize($0.name) }
+            // 第一级：精确 / 前缀匹配（避免「高德地图」被「地图」吞掉）
+            if let idx = names.firstIndex(of: tn) {
+                return URL(string: list[idx].scheme)
+            }
+            if let idx = names.firstIndex(where: { tn.hasPrefix($0) && !$0.isEmpty }) {
+                return URL(string: list[idx].scheme)
+            }
+            // 第二级：包含匹配（仅对多字数目标，减少误匹配）
+            for (i, nm) in names.enumerated() where !nm.isEmpty && nm.count >= 2 {
+                if tn.contains(nm) {
+                    return URL(string: list[i].scheme)
+                }
+            }
+            return nil
+        }
+
+        // 1) 远程热更新别名表（优先；可随时下发新增 App 支持，无需重装）
+        if let remoteList = AppConfig.shared.appSchemes() {
+            let converted = remoteList.map { (name: $0.name, scheme: $0.scheme) }
+            if let url = match(converted) { return url }
+        }
+        // 2) 内置表
+        return match(Self.builtinAppSchemes)
+    }
+
+    /// 内置「打开 App」scheme 表（热更新 alias 表可扩展此表；此处按 name 长度降序保证长名优先）
+    private static let builtinAppSchemes: [(name: String, scheme: String)] = {
+        let list: [(String, String)] = [
+            // 第三方 App
+            ("微信支付", "weixinpay://"), ("WeChat", "weixin://"), ("微信", "weixin://"),
+            ("QQ空间", "mqzone://"), ("QQ音乐", "qqmusic://"), ("QQMusic", "qqmusic://"), ("QQ", "mqq://"),
             ("支付宝", "alipay://"), ("Alipay", "alipay://"),
-            ("抖音", "snssdk1128://"), ("Douyin", "snssdk1128://"),
+            ("抖音极速版", "snssdk1128://"), ("Douyin", "snssdk1128://"), ("抖音", "snssdk1128://"),
             ("小红书", "xhsdiscover://"), ("XHS", "xhsdiscover://"),
             ("微博", "weibo://"), ("Weibo", "weibo://"),
             ("淘宝", "taobao://"), ("Taobao", "taobao://"),
@@ -728,7 +782,6 @@ final class OnlineSkillService {
             ("高德地图", "iosamap://"), ("高德", "iosamap://"), ("Amap", "iosamap://"),
             ("百度地图", "baidumap://"), ("BaiduMap", "baidumap://"),
             ("网易云音乐", "orpheus://"), ("网易云", "orpheus://"), ("CloudMusic", "orpheus://"),
-            ("QQ音乐", "qqmusic://"), ("QQMusic", "qqmusic://"),
             ("爱奇艺", "iqiyi://"), ("Iqiyi", "iqiyi://"),
             ("腾讯视频", "tenvideo://"), ("TencentVideo", "tenvideo://"),
             ("优酷", "youku://"), ("Youku", "youku://"),
@@ -739,27 +792,22 @@ final class OnlineSkillService {
             ("腾讯会议", "wemeet://"), ("WeMeet", "wemeet://"), ("会议", "wemeet://"),
             // 系统 App（稳定可用）
             ("浏览器", "http://"), ("Safari", "http://"), ("网页", "http://"),
-            ("地图", "http://maps.apple.com/?q="), ("苹果地图", "http://maps.apple.com/?q="),
+            ("苹果地图", "http://maps.apple.com/?q="), ("地图", "http://maps.apple.com/?q="),
             ("照片", "photos-redirect://"), ("相册", "photos-redirect://"), ("图库", "photos-redirect://"),
             ("时钟", "clock-app://"), ("闹钟", "clock-app://"), ("计时器", "clock-app://"),
             ("备忘录", "mobilenotes://"), ("记事本", "mobilenotes://"),
             ("电话", "tel://"), ("拨号", "tel://"),
             ("邮件", "mailto://"), ("邮箱", "mailto://"), ("Mail", "mailto://"),
             ("通讯录", "contacts://"), ("联系人", "contacts://"), ("电话本", "contacts://"),
-            ("设置", "App-Prefs:root="), ("系统设置", "App-Prefs:root="),
+            ("系统设置", "App-Prefs:root="), ("设置", "App-Prefs:root="),
             ("天气", "weather://"), ("Weather", "weather://"),
             ("日历", "calshow://"), ("Calendar", "calshow://"),
             ("文件", "shareddocuments://"), ("Files", "shareddocuments://"),
             ("播客", "podcasts://"), ("Podcast", "podcasts://"),
             ("App Store", "itms-apps://"), ("应用商店", "itms-apps://"), ("AppStore", "itms-apps://"),
         ]
-        for app in appSchemes {
-            if target.contains(app.name) || app.name.contains(target) || target.hasPrefix(app.name) {
-                return URL(string: app.scheme)
-            }
-        }
-        return nil
-    }
+        return list
+    }()
 
     /// 打开外部 URL / App scheme（直接 open，不依赖 canOpenURL，避免 LSApplicationQueriesSchemes 限制）
     /// 崩溃修复：UIApplication.shared.open 的 completion 对部分 scheme（成功拉起其他 App 后本 App 退到后台）
@@ -903,6 +951,11 @@ final class OnlineSkillService {
 }
 
 /// 定位服务（CoreLocation）
+/// 定位修复 v28：
+/// 1) didChangeAuthorization 授权后同时启动定位与指南针（原来只 requestLocation，指南针从不启动）；
+/// 2) 新增 didFailWithError 处理：失败给出明确原因（原来空实现→永远超时返回 nil、用户只能看到「定位失败」）；
+/// 3) awaitLocation/awaitHeading 等待授权时最长 20s（原来 notDetermined 时循环太快直接放弃）；
+/// 4) 持续定位（startUpdatingLocation）替代单次 requestLocation，避免偶发一次定位失败。
 final class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = LocationService()
     private let manager = CLLocationManager()
@@ -911,11 +964,14 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     /// 最近一次朝向（指南针，度）。仅系统操作工具请求时更新。
     @Published var currentHeading: CLHeading?
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
+    /// 最近一次定位/朝向失败原因（诊断展示）
+    @Published var lastErrorText: String?
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.headingFilter = 1
         authorizationStatus = manager.authorizationStatus
     }
 
@@ -923,9 +979,18 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         manager.requestWhenInUseAuthorization()
     }
 
+    /// 请求定位（已授权时启动持续定位；未授权则先请求权限）。
     func requestLocation() {
-        if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
-            manager.requestLocation()
+        let status = manager.authorizationStatus
+        if status == .authorizedWhenInUse || status == .authorizedAlways {
+            manager.startUpdatingLocation()
+            // 保险：15 秒后仍无位置则补发一次单次请求（室内弱信号场景）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+                guard let self else { return }
+                let s = self.manager.authorizationStatus
+                guard s == .authorizedWhenInUse || s == .authorizedAlways else { return }
+                if self.currentLocation == nil { self.manager.requestLocation() }
+            }
         } else {
             requestPermission()
         }
@@ -933,53 +998,80 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
 
     /// 启动指南针（朝向）更新；已授权时生效。
     func requestHeading() {
-        if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
+        let status = manager.authorizationStatus
+        if status == .authorizedWhenInUse || status == .authorizedAlways {
             manager.startUpdatingHeading()
+        } else {
+            requestPermission()
         }
     }
 
-    /// 异步等待一次朝向数据（最多约 5 秒）。未授权时先请求定位权限。
+    /// 异步等待一次朝向数据（最长约 10 秒；等待授权时最长约 20 秒）。
+    /// 返回 nil 时可用 lastErrorText 获取具体原因。
     func awaitHeading() async -> CLHeading? {
         if authorizationStatus == .notDetermined {
             requestPermission()
         } else if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
             manager.startUpdatingHeading()
         } else {
+            lastErrorText = "定位权限被拒绝或受限，请到 设置 → 隐私 → 定位服务 中允许后重试"
             return nil
         }
-        for _ in 0..<10 {
+        for _ in 0..<20 {
             if let h = currentHeading { return h }
+            // 请求权限后仍 notDetermined（用户还没操作系统弹窗），继续等而不是空转
+            if authorizationStatus == .notDetermined { continue }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
-        return currentHeading
+        if let h = currentHeading { return h }
+        lastErrorText = self.authorizationStatus == .notDetermined
+            ? "等待定位授权超时，请在弹出的系统弹窗中允许定位"
+            : "暂时没有朝向数据（设备可能无磁力计，或建议到开阔处重试）"
+        return nil
     }
 
-    /// 异步等待一次定位结果（最多约 10 秒）。未授权时先弹权限请求。
+    /// 异步等待一次定位结果（最长约 10 秒；等待授权时最长约 20 秒）。
+    /// 返回 nil 时可用 lastErrorText 获取具体原因。
     func awaitLocation() async -> CLLocation? {
         if authorizationStatus == .notDetermined {
             requestPermission()
         } else if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
-            manager.requestLocation()
+            manager.startUpdatingLocation()
         } else {
+            lastErrorText = "定位权限被拒绝或受限，请到 设置 → 隐私 → 定位服务 中允许后重试"
             return nil
         }
         for _ in 0..<20 {
             if let loc = currentLocation { return loc }
+            // 请求权限后仍 notDetermined（用户还没操作系统弹窗），继续等而不是空转
+            if authorizationStatus == .notDetermined { continue }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
-        return currentLocation
+        if let loc = currentLocation { return loc }
+        lastErrorText = self.authorizationStatus == .notDetermined
+            ? "等待定位授权超时，请在弹出的系统弹窗中允许定位"
+            : "暂时没有定位结果（建议到室外或开阔处重试）"
+        return nil
     }
 
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        DispatchQueue.main.async { self.authorizationStatus = status }
-        if status == .authorizedWhenInUse || status == .authorizedAlways {
-            manager.requestLocation()
+        DispatchQueue.main.async {
+            self.authorizationStatus = status
+            if status == .authorizedWhenInUse || status == .authorizedAlways {
+                // 授权后同时启动定位与指南针：一次授权同时满足「定位 / 海拔 / 方向」三个能力
+                manager.startUpdatingLocation()
+                manager.startUpdatingHeading()
+                self.lastErrorText = nil
+            } else if status == .denied || status == .restricted {
+                self.lastErrorText = "定位权限被拒绝，请到 设置 → 隐私 → 定位服务 中允许后重试"
+            }
         }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         DispatchQueue.main.async {
             self.currentLocation = locations.last
+            self.lastErrorText = nil
         }
     }
 
@@ -989,5 +1081,20 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         }
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        DispatchQueue.main.async {
+            let ns = error as NSError
+            switch ns.code {
+            case CLError.locationUnknown.rawValue:
+                // 位置暂时未知（常见于室内/冷启动）：保留现状，持续定位会在信号恢复后自动补上
+                self.lastErrorText = "正在获取定位…（当前信号较弱）"
+            case CLError.denied.rawValue:
+                self.lastErrorText = "定位权限被拒绝，请到 设置 → 隐私 → 定位服务 中允许后重试"
+            case CLError.headingFailure.rawValue:
+                self.lastErrorText = "指南针/方向不可用（设备不支持或需要校准）"
+            default:
+                self.lastErrorText = "定位服务异常（\(ns.localizedDescription)）"
+            }
+        }
+    }
 }
