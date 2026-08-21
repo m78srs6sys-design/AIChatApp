@@ -1,9 +1,9 @@
 {
-  "version": 1,
-  "minAppVersion": 26,
+  "version": 2,
+  "minAppVersion": 28,
   "rollout": 100,
   "channel": "stable",
-  "notes": "出厂基线配置：全部功能开启，使用内置默认主题与提示词",
+  "notes": "v2：扩展打开 App 别名表（微信读书/快手/携程/滴滴 等 11 款）+ 提示词约束（打开 App 必须写全名）",
   "ui": {
     "showPDFExport": true,
     "showClearButton": true,
@@ -32,5 +32,19 @@
       { "key": "notification", "icon": "bell.badge.fill", "title": "通知（下载完成提醒）" }
     ]
   },
-  "tools": ["search", "weather", "web", "image", "imagesearch", "location", "system", "card"]
+  "tools": ["search", "weather", "web", "image", "imagesearch", "location", "system", "card"],
+  "systemPromptSuffix": "【打开 App 时必须写全名】如果用户要求打开某个 App，<system> 命令里必须写该 App 的完整准确名称（例如「打开 微信支付」「打开 高德地图」）。若用户表述模糊（如只说「打开那个读书软件」「打开支付软件」），先从上下文判断最可能的具体 App，若仍不确定，先向用户确认名称再调用；严禁把模糊描述直接当作 App 名传入，否则会导致打开失败。",
+  "appSchemes": [
+    { "name": "微信读书", "scheme": "weread://" },
+    { "name": "快手", "scheme": "kwai://" },
+    { "name": "大众点评", "scheme": "dianping://" },
+    { "name": "携程", "scheme": "ctrip://" },
+    { "name": "滴滴", "scheme": "didi://" },
+    { "name": "Keep", "scheme": "keep://" },
+    { "name": "剪映", "scheme": "capcut://" },
+    { "name": "闲鱼", "scheme": "idlefish://" },
+    { "name": "百度网盘", "scheme": "baidunetdisk://" },
+    { "name": "WPS", "scheme": "wpsoffice://" },
+    { "name": "去哪儿", "scheme": "qunar://" }
+  ]
 }
