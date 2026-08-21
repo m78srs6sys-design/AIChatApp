@@ -736,6 +736,22 @@ final class OnlineSkillService {
             ("百度", "baiduboxapp://"), ("Baidu", "baiduboxapp://"),
             ("钉钉", "dingtalk://"), ("DingTalk", "dingtalk://"),
             ("企业微信", "wxwork://"), ("WeCom", "wxwork://"),
+            ("腾讯会议", "wemeet://"), ("WeMeet", "wemeet://"), ("会议", "wemeet://"),
+            // 系统 App（稳定可用）
+            ("浏览器", "http://"), ("Safari", "http://"), ("网页", "http://"),
+            ("地图", "http://maps.apple.com/?q="), ("苹果地图", "http://maps.apple.com/?q="),
+            ("照片", "photos-redirect://"), ("相册", "photos-redirect://"), ("图库", "photos-redirect://"),
+            ("时钟", "clock-app://"), ("闹钟", "clock-app://"), ("计时器", "clock-app://"),
+            ("备忘录", "mobilenotes://"), ("记事本", "mobilenotes://"),
+            ("电话", "tel://"), ("拨号", "tel://"),
+            ("邮件", "mailto://"), ("邮箱", "mailto://"), ("Mail", "mailto://"),
+            ("通讯录", "contacts://"), ("联系人", "contacts://"), ("电话本", "contacts://"),
+            ("设置", "App-Prefs:root="), ("系统设置", "App-Prefs:root="),
+            ("天气", "weather://"), ("Weather", "weather://"),
+            ("日历", "calshow://"), ("Calendar", "calshow://"),
+            ("文件", "shareddocuments://"), ("Files", "shareddocuments://"),
+            ("播客", "podcasts://"), ("Podcast", "podcasts://"),
+            ("App Store", "itms-apps://"), ("应用商店", "itms-apps://"), ("AppStore", "itms-apps://"),
         ]
         for app in appSchemes {
             if target.contains(app.name) || app.name.contains(target) || target.hasPrefix(app.name) {
@@ -746,16 +762,34 @@ final class OnlineSkillService {
     }
 
     /// 打开外部 URL / App scheme（直接 open，不依赖 canOpenURL，避免 LSApplicationQueriesSchemes 限制）
+    /// 崩溃修复：UIApplication.shared.open 的 completion 对部分 scheme（成功拉起其他 App 后本 App 退到后台）
+    /// 不保证回调。旧实现用 withTimeout + withCheckedContinuation，超时后 continuation 从未被 resume，
+    /// 任务被取消/释放时触发 Swift 并发运行时 "CheckedContinuation leaked" fatalError → SIGTRAP 闪退。
+    /// 新实现用「完成回调 + 5s 超时兜底」竞争同一个 continuation，保证它恰好被 resume 一次、绝不泄漏。
     private func openExternalURL(_ url: URL) async -> (description: String, success: Bool) {
-        let done = await withTimeout(5) {
-            await MainActor.run {
-                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+        let opened: Bool = await withCheckedContinuation { continuation in
+            // finished 标志保证回调与超时兜底只 resume 一次（两者都在主线程串行执行，无竞态）
+            var finished = false
+            func finish(_ ok: Bool) {
+                guard !finished else { return }
+                finished = true
+                continuation.resume(returning: ok)
             }
-        } != nil
-        if done {
+            DispatchQueue.main.async {
+                UIApplication.shared.open(url, options: [:]) { ok in
+                    finish(ok)
+                }
+            }
+            // 5 秒兜底：部分 scheme 成功拉起 App 后 completion 永不被回调，
+            // 超时也视为「已发起打开」，避免 continuation 挂起/泄漏导致闪退或「没反应」
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                finish(false)
+            }
+        }
+        if opened {
             return ("已打开「\(url.absoluteString)」", true)
         }
-        return ("打开失败：\(url.absoluteString)", false)
+        return ("已尝试打开「\(url.absoluteString)」：请查看是否已切换到对应 App；若没有反应，可能该 App 未安装或不支持直接打开", true)
     }
 
     /// 从命令中提取数值：支持 "50"、"50%"、"0.5"、"50 %" 等
@@ -847,29 +881,24 @@ final class OnlineSkillService {
     }
 
     /// 跳转指定系统设置页；失败时回退到 App 设置页。
+    /// 修复：不再用 canOpenURL 前判（iOS10+ 对未声明 LSApplicationQueriesSchemes 的 App-Prefs: 等 scheme
+    /// 一律返回 false，导致永远走兜底、打不开目标设置页），open 本身不需要声明即可直接拉起。
     private func openSystemSettings(path: String, manual: String) async -> (description: String, success: Bool) {
-        let done = await withTimeout(5) {
-            await MainActor.run {
-                // 优先尝试打开具体面板（iOS 内部 scheme，部分版本可用）
-                let candidates = ["App-Prefs:root=\(path)", "prefs:root=\(path)"]
-                for urlString in candidates {
-                    if let url = URL(string: urlString), UIApplication.shared.canOpenURL(url) {
-                        UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                        return true
-                    }
-                }
-                // 兜底：打开本 App 的系统设置页
-                if let url = URL(string: UIApplication.openSettingsURLString) {
+        await MainActor.run {
+            let candidates = ["App-Prefs:root=\(path)", "prefs:root=\(path)"]
+            for urlString in candidates {
+                if let url = URL(string: urlString) {
                     UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                    return true
+                    return ("已打开「\(manual)」设置页面，请在出现的设置中完成操作", true)
                 }
-                return false
             }
-        } != nil
-        if done {
-            return ("已打开系统设置，\(manual)", true)
+            // 兜底：打开本 App 的系统设置页
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                return ("已打开本 App 的系统设置页，\(manual)", true)
+            }
+            return ("无法打开系统设置，\(manual)", false)
         }
-        return ("无法打开系统设置，\(manual)", false)
     }
 }
 
