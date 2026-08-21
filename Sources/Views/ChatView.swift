@@ -5,8 +5,6 @@ struct ChatView: View {
     @EnvironmentObject var settingsVM: SettingsViewModel
     @EnvironmentObject var modelManager: LocalModelManager
     @EnvironmentObject var store: ConversationStore
-    // 热更新：UI 元素显隐 / 文案跟随远程配置即时响应
-    @ObservedObject private var appConfig = AppConfig.shared
 
     @State private var showClearAlert = false
     @State private var showPDFShare = false
@@ -133,50 +131,46 @@ struct ChatView: View {
 
             Spacer()
 
-            // PDF 导出（热更新：showPDFExport 可关闭）
-            if appConfig.uiFlag("showPDFExport", fallback: true) {
-                Button {
-                    guard !isExportingPDF else { return }
-                    Task {
-                        isExportingPDF = true
-                        pdfProgress = 0
-                        chatVM.statusMessage = "正在生成 PDF…"
-                        do {
-                            pdfURL = try await chatVM.exportPDF { progress in
-                                pdfProgress = progress
-                            }
-                            chatVM.statusMessage = nil
-                            showPDFShare = true
-                        } catch {
-                            chatVM.statusMessage = nil
-                            chatVM.errorMessage = "无内容可导出"
+            // PDF 导出
+            Button {
+                guard !isExportingPDF else { return }
+                Task {
+                    isExportingPDF = true
+                    pdfProgress = 0
+                    chatVM.statusMessage = "正在生成 PDF…"
+                    do {
+                        pdfURL = try await chatVM.exportPDF { progress in
+                            pdfProgress = progress
                         }
-                        isExportingPDF = false
+                        chatVM.statusMessage = nil
+                        showPDFShare = true
+                    } catch {
+                        chatVM.statusMessage = nil
+                        chatVM.errorMessage = "无内容可导出"
                     }
-                } label: {
-                    Image(systemName: isExportingPDF ? "doc.text.fill" : "doc.text.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(AppTheme.secondaryText)
-                        .frame(width: 38, height: 38)
-                        .glassCircle(fallback: AppTheme.surface, enabled: settingsVM.settings.liquidGlassEnabled)
+                    isExportingPDF = false
                 }
-                .disabled(isExportingPDF)
-                .buttonStyle(BounceButtonStyle())
+            } label: {
+                Image(systemName: isExportingPDF ? "doc.text.fill" : "doc.text.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(AppTheme.secondaryText)
+                    .frame(width: 38, height: 38)
+                    .glassCircle(fallback: AppTheme.surface, enabled: settingsVM.settings.liquidGlassEnabled)
             }
+            .disabled(isExportingPDF)
+            .buttonStyle(BounceButtonStyle())
 
-            // 清空（热更新：showClearButton 可关闭）
-            if appConfig.uiFlag("showClearButton", fallback: true) {
-                Button {
-                    showClearAlert = true
-                } label: {
-                    Image(systemName: "trash.fill")
-                        .font(.system(size: 15))
-                        .foregroundColor(AppTheme.secondaryText)
-                        .frame(width: 38, height: 38)
-                        .glassCircle(fallback: AppTheme.surface, enabled: settingsVM.settings.liquidGlassEnabled)
-                }
-                .buttonStyle(BounceButtonStyle())
+            // 清空
+            Button {
+                showClearAlert = true
+            } label: {
+                Image(systemName: "trash.fill")
+                    .font(.system(size: 15))
+                    .foregroundColor(AppTheme.secondaryText)
+                    .frame(width: 38, height: 38)
+                    .glassCircle(fallback: AppTheme.surface, enabled: settingsVM.settings.liquidGlassEnabled)
             }
+            .buttonStyle(BounceButtonStyle())
 
             // 设置
             NavigationLink(value: AppRoute.settings) {
@@ -315,12 +309,12 @@ struct ChatView: View {
                     .font(.system(size: 36, weight: .light))
                     .foregroundColor(AppTheme.accent)
             }
-            Text(appConfig.uiString("emptyTitle") ?? (store.currentMode == .online ? "开始你的 AI 对话" : "离线模式已就绪"))
+            Text(store.currentMode == .online ? "开始你的 AI 对话" : "离线模式已就绪")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(AppTheme.primaryText)
-            Text(appConfig.uiString("emptySubtitle") ?? (store.currentMode == .online
+            Text(store.currentMode == .online
                  ? "支持联网搜索、图片生成、天气、网页摘要等能力"
-                 : "所有推理在本地完成，隐私无忧"))
+                 : "所有推理在本地完成，隐私无忧")
                 .font(.system(size: 14))
                 .foregroundColor(AppTheme.secondaryText)
                 .multilineTextAlignment(.center)
