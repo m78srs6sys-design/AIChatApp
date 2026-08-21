@@ -68,7 +68,12 @@ final class LocalInferenceEngine {
         self.model = loadedModel
         self.usingGPU = modelParams.n_gpu_layers > 0
 
+        // 上下文窗口自适应压缩：KV Cache 占显存/内存大头，
+        // 4096 足够日常长对话，能显著降低内存压力、明显提速（尤其 7B 以上）
+        let ctxSize = min(max(2048, contextLength), 4096)
+
         var ctxParams = llama_context_default_params()
+        ctxParams.n_ctx = UInt32(ctxSize)
         ctxParams.n_ctx = UInt32(contextLength)
         // 线程数：GPU 卸载后 CPU 只做采样/剩余层，2~6 足够，避免线程风暴和 UI 抢核
         let cores = ProcessInfo.processInfo.activeProcessorCount
