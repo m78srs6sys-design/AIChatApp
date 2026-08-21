@@ -162,12 +162,16 @@ final class ChatViewModel: ObservableObject {
               <imageSearch>查询词</imageSearch>
               <card>卡片内容描述（只写要点或数据，不要自己写 HTML 代码；系统会交给另一个 AI 把它渲染成美观卡片）</card>
               <system>命令</system>
-                <system> 的命令只能是以下之一（数字可写 50 表示 50%，也可写 0.5）：
-                brightness 50 / volume 50 / torch on / torch off / 低电量 / wifi / 蓝牙 / 显示 / 声音
+                <system> 支持以下命令：
+                · 调节类：brightness 50 / volume 50 / torch on / torch off
+                · 设置跳转类：低电量 / wifi / 蓝牙 / 显示 / 声音
+                · 打开其它 App：写「打开 微信」/「打开 地图」/「打开 哔哩哔哩」等（支持微信、QQ、支付宝、抖音、小红书、微博、淘宝、京东、拼多多、B站、美团、饿了么、高德、百度地图、网易云音乐、QQ音乐、爱奇艺、腾讯视频、知乎等）
+                · 打开任意网址或指定界面：直接写 URL，如 <system>https://mp.weixin.qq.com</system> 或 <system>https://www.bilibili.com/video/</system>
 
             【可视化卡片 <card>】
-            - 位置 / 天气 / 网页 / 搜索 / 图片 / 系统操作 已有专属展示卡片，不要用 <card> 重复生成相同内容（否则会出现两张卡，很奇怪）。
-            - 仅在需要展示其它自定义结构化信息时（如对比、清单、步骤、表格、时间线、数据汇总）才使用 <card>；并尽量在更多场景主动展示，提升可读性。
+            - 位置 / 天气 / 网页 / 搜索结果 的工具结果会自动渲染成卡片，不要用 <card> 重复生成相同内容（否则会出现两张卡，很奇怪）。
+            - 除工具结果外，请在更多场景主动使用 <card> 展示结构化信息：对比、清单、步骤教程、表格、时间线、数据汇总、行程规划、学习笔记、新闻要点、翻译结果、评分推荐、攻略等。
+            - 判断标准：只要内容适合用卡片/列表/表格展示，就优先输出一个 <card>，不要只给干巴巴的文字。
             - <card> 内只写内容描述 / 要点 / 数据，绝对不要写 HTML 代码（HTML 由系统交给另一个 AI 生成）。
 
             【工作流程】
@@ -318,18 +322,21 @@ final class ChatViewModel: ObservableObject {
 
         do {
             statusMessage = "正在加载本地模型，请稍候…"
+            // 提前启动实时活动（显示「正在加载模型」），避免活动在模型加载完成前不可见
+            if #available(iOS 16.1, *) {
+                DownloadActivityManager.shared.startInference(modelName: model.name)
+            }
             try await localEngine.loadModel(at: path.path, contextLength: model.contextLength)
         } catch {
             errorMessage = error.localizedDescription
+            if #available(iOS 16.1, *) {
+                DownloadActivityManager.shared.endInference()
+            }
             return
         }
 
         let aiId = appendAssistant()
         statusMessage = "正在生成回复…"
-
-        if #available(iOS 16.1, *) {
-            DownloadActivityManager.shared.startInference(modelName: model.name)
-        }
 
         do {
             let history = store.current?.messages.filter { $0.id != aiId } ?? []
@@ -433,6 +440,11 @@ final class ChatViewModel: ObservableObject {
             }
             if let results = try? await skillService.search(query: q, apiKey: settings.apiKey, baseURL: settings.apiURL), !results.isEmpty {
                 let text = results.prefix(3).map { "· \($0.title)：\($0.snippet ?? "")" }.joined(separator: "\n")
+                // 主动生成 HTML 卡片（独立 AI 渲染，失败回退原生搜索结果卡）
+                let spec = "搜索「\(content)」的实用结果汇总：\n\(results.prefix(4).map { "· 标题：\($0.title)\n  摘要：\($0.snippet ?? "")" }.joined(separator: "\n"))"
+                if let html = await generateCardHTML(spec: spec, settings: settings) {
+                    return ([.htmlCard(html: html)], "搜索「\(content)」结果：\n\(text)")
+                }
                 return ([.searchResults(results)], "搜索「\(content)」结果：\n\(text)")
             }
             return ([], "搜索「\(content)」未找到结果。")
@@ -441,10 +453,10 @@ final class ChatViewModel: ObservableObject {
             let locWords = ["我的位置", "附近", "当前位置", "这里", "周边", "定位"]
             if locWords.contains(where: { content.contains($0) }), let loc = lastLocation {
                 if let w = try? await skillService.weather(lat: loc.lat, lon: loc.lon, cityName: loc.city) {
-                    return ([.weather(w)], Self.weatherResultText(w))
+                    return await weatherWithCard(w, raw: content, settings: settings)
                 }
             } else if let w = try? await skillService.weather(from: content) {
-                return ([.weather(w)], Self.weatherResultText(w))
+                return await weatherWithCard(w, raw: content, settings: settings)
             }
             return ([], "天气查询「\(content)」失败。")
 
@@ -582,6 +594,18 @@ final class ChatViewModel: ObservableObject {
         if let h = w.humidity { s += "，湿度 \(h)%" }
         if let wind = w.windSpeed { s += "，风速 \(String(format: "%.0f", wind)) km/h" }
         return s
+    }
+
+    /// 天气结果优先渲染为 HTML 卡片（独立 AI），失败回退原生天气卡
+    private func weatherWithCard(_ w: WeatherInfo, raw: String, settings: APISettings) async -> ([MessageAttachment], String) {
+        let text = Self.weatherResultText(w)
+        var spec = "\(w.city)天气预报\n天气：\(w.condition)\n气温：\(w.temperature)\(w.units)"
+        if let h = w.humidity { spec += "\n湿度：\(h)%" }
+        if let wind = w.windSpeed { spec += "\n风速：\(wind) km/h" }
+        if let html = await generateCardHTML(spec: spec, settings: settings) {
+            return ([.htmlCard(html: html)], text)
+        }
+        return ([.weather(w)], text)
     }
 
     /// 工具调用后的极简动作说明（兜底，非模型发言）
