@@ -14,8 +14,6 @@ struct AIChatApp: App {
         CrashLogger.shared.install()
         // 强制深色主题
         UITabBar.appearance().scrollEdgeAppearance = UITabBarAppearance().alsoDark()
-        // 启动后自动检查热更新（后台拉取 GitHub 配置源；无网/失败自动沿用上次或出厂配置）
-        Task { await HotUpdateManager.shared.checkForUpdate() }
     }
 
     var body: some Scene {
