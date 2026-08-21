@@ -161,14 +161,9 @@ final class ChatViewModel: ObservableObject {
 
         // 系统提示：工具/卡片等「相关功能」需同时开启 深度思考 + 联网附加 才可用
         // （缺少任一条件 → 不注入工具提示词 → AI 直接回答，不调用任何工具）
-        // 热更新：远程 latest.json 可整体覆盖 systemPrompt（AppConfig.shared.systemPrompt）
-        // 或追加 systemPromptSuffix 约束（如「打开 App 必须写全名」）
         var systemPrompt: String? = nil
         if settings.onlineFeaturesEnabled && settings.deepThinking {
-            var sp = AppConfig.shared.systemPrompt(remoteOverride: Self.builtinSystemPrompt()) ?? ""
-            if let suffix = AppConfig.shared.systemPromptSuffix(), !suffix.isEmpty {
-                sp += "\n\n" + suffix + "\n"
-            }
+            var sp = Self.builtinSystemPrompt()
             let wf = Self.workflowPrompt(settings.workflows)
             if !wf.isEmpty { sp += "\n\n" + wf }
             systemPrompt = sp
@@ -239,12 +234,6 @@ final class ChatViewModel: ObservableObject {
                     }
                     calledTools.insert(callKey)
                     let label = Self.toolLabel(kind)
-                    // 热更新白名单过滤：服务端关闭的工具直接跳过，让 AI 改用其他方式
-                    if !AppConfig.shared.toolEnabled(kind) {
-                        toolTurns.append(ChatMessage(role: .user,
-                            content: "[工具结果：\(label)] 该工具当前已关闭（服务端配置），请改用其他可用工具或直接回答用户。"))
-                        continue
-                    }
                     statusMessage = "正在调用工具：\(label)…"
                     let (att, resultText) = await executeCallWithResult(kind: kind, content: content, settings: settings)
                     attachments.append(contentsOf: att)
@@ -662,8 +651,7 @@ final class ChatViewModel: ObservableObject {
         return out.isEmpty ? nil : out
     }
 
-    /// 内置系统提示词（工具/卡片/系统操作说明）。热更新：远程 latest.json 的
-    /// systemPrompt 字段可整体覆盖此内容（AppConfig.shared.systemPrompt）。
+    /// 内置系统提示词（工具/卡片/系统操作说明）。
     private static func builtinSystemPrompt() -> String {
         """
         你是一个会主动使用工具的智能助手。你可以调用下面列出的「工具标签」来获取信息或执行操作。
