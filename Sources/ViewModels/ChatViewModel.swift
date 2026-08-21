@@ -542,10 +542,9 @@ final class ChatViewModel: ObservableObject {
                 let att = MessageAttachment.systemAction(action: content, description: "用户未授权")
                 return ([att], "⚠️ 用户没有许可当前系统操作「\(content)」。请不要执行该系统操作，尊重用户意愿：要么改用不需要系统权限的方式完成回答，要么直接给出替代建议。")
             }
-            // 整个系统操作链强制在主线程执行（UIKit / CoreLocation / 传感器），避免后台线程访问系统 API 闪退
-            let (desc, ok) = await MainActor.run {
-                await skillService.executeSystemAction(command: content)
-            }
+            // 系统操作链：ChatViewModel 为 @MainActor，且 executeSystemAction 内部所有 UIKit
+            // 访问都已包在主线程（DispatchQueue.main.async / MainActor.run），此处直接调用即可
+            let (desc, ok) = await skillService.executeSystemAction(command: content)
             let att = MessageAttachment.systemAction(action: content, description: desc)
             return ([att], "系统操作「\(content)」：\(desc)\(ok ? "" : "（执行失败）")")
 
