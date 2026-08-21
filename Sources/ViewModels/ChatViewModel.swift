@@ -114,6 +114,11 @@ final class ChatViewModel: ObservableObject {
     func stopGeneration() {
         generationTask?.cancel()
         generationTask = nil
+        // 若系统操作许可弹窗还挂着（生成被终止时用户来不及选择），自动视为不许可并释放挂起任务，
+        // 避免像手动滚动一样残留下一个永不回应的 CheckedContinuation 导致后续操作卡死
+        if systemPermissionRequest != nil {
+            respondToPermission(granted: false)
+        }
         isGenerating = false
         statusMessage = nil
         errorMessage = nil
@@ -537,7 +542,10 @@ final class ChatViewModel: ObservableObject {
                 let att = MessageAttachment.systemAction(action: content, description: "用户未授权")
                 return ([att], "⚠️ 用户没有许可当前系统操作「\(content)」。请不要执行该系统操作，尊重用户意愿：要么改用不需要系统权限的方式完成回答，要么直接给出替代建议。")
             }
-            let (desc, ok) = await skillService.executeSystemAction(command: content)
+            // 整个系统操作链强制在主线程执行（UIKit / CoreLocation / 传感器），避免后台线程访问系统 API 闪退
+            let (desc, ok) = await MainActor.run {
+                await skillService.executeSystemAction(command: content)
+            }
             let att = MessageAttachment.systemAction(action: content, description: desc)
             return ([att], "系统操作「\(content)」：\(desc)\(ok ? "" : "（执行失败）")")
 
@@ -549,8 +557,13 @@ final class ChatViewModel: ObservableObject {
     // MARK: - 系统操作许可弹窗
 
     /// 在调用「系统操作」工具前征求用户许可（中文「人话」弹窗）。
-    /// - Returns: true=用户允许执行；false=用户不许可（或 App 在后台无法弹窗，自动视为不许可避免任务挂死）。
+    /// - Returns: true=用户允许执行；false=用户不许可（或 App 在后台无法弹窗，自动视为不许可避免任务挂起）。
     private func requestSystemPermission(for command: String) async -> Bool {
+        // 防御：若上一次弹窗的续体因异常未被释放，先拒绝旧的，避免新弹窗无人能响应
+        if let stale = permissionContinuation {
+            permissionContinuation = nil
+            stale.resume(returning: false)
+        }
         let explanation = Self.humanizeSystemCommand(command)
         // App 在后台时无法弹窗：直接视为不许可，防止生成任务永久挂起
         if UIApplication.shared.applicationState != .active {
