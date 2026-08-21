@@ -573,7 +573,118 @@ final class OnlineSkillService {
         if cmd.contains("声音") || cmd.contains("铃声") {
             return await openSystemSettings(path: "Sounds", manual: "请手动调节铃声与提醒")
         }
-        return ("未知系统操作「\(command)」。支持：打开 XX app、https://链接、亮度 50%、音量 50%、手电筒开/关、低电量、wifi、蓝牙、显示、声音", false)
+        // 传感器读数：海拔 / 气压 / 指南针 / 步数 / 电池 / 内存 / 存储（只读，不会修改任何系统状态）
+        if cmd.contains("所有传感器") || cmd == "sensors" || cmd.contains("传感器总览") || cmd.contains("传感器数据") {
+            return await readAllSensors()
+        }
+        if cmd.contains("海拔") || cmd.hasPrefix("altitude") || cmd.contains("高度") {
+            return await readAltitude()
+        }
+        if cmd.contains("气压") || cmd.contains("气压计") || cmd.contains("压强") || cmd.hasPrefix("barometer") {
+            return await readBarometer()
+        }
+        if cmd.contains("指南针") || cmd.contains("朝向") || cmd.hasPrefix("heading") || (cmd.contains("方向") && !cmd.contains("地图")) {
+            return await readHeading()
+        }
+        if cmd.contains("步数") || cmd.hasPrefix("steps") || (cmd.contains("走了") && cmd.contains("步")) {
+            return await readSteps()
+        }
+        if cmd.contains("电池") || cmd.contains("电量") || cmd.contains("剩余电") || cmd.hasPrefix("battery") {
+            return await readBattery()
+        }
+        if cmd.contains("内存") || cmd.hasPrefix("memory") || cmd.contains("ram") {
+            return await readMemory()
+        }
+        if cmd.contains("存储") || cmd.contains("剩余空间") || cmd.contains("空间还有多少") || cmd.hasPrefix("storage") {
+            return await readStorage()
+        }
+        // 读取类操作（无副作用）统一兜底文案
+        return ("未知系统操作「\(command)」。支持：打开 XX app、https://链接、亮度 50%、音量 50%、手电筒开/关、低电量、wifi、蓝牙、显示、声音；传感器：海拔、气压、指南针、步数、电池、内存、存储、所有传感器", false)
+    }
+
+    // MARK: - 传感器读数（只读，无副作用）
+
+    /// 当前海拔（米）。复用定位服务；未授权时先尝试请求授权。
+    private func readAltitude() async -> (description: String, success: Bool) {
+        let loc: CLLocation?
+        if let cached = LocationService.shared.currentLocation {
+            loc = cached
+        } else {
+            loc = await LocationService.shared.awaitLocation()
+        }
+        if let loc {
+            let alt = loc.altitude
+            if abs(alt) > 0.1 || loc.verticalAccuracy >= 0 {
+                return (String(format: "当前海拔约 %.0f 米（GPS 高度）", alt), true)
+            }
+        }
+        return ("无法读取海拔：需要位置权限，或当前定位信号中暂无高度数据", false)
+    }
+
+    /// 当前气压（hPa）。依赖设备内置气压计（iPhone 6 及以后均支持）。
+    private func readBarometer() async -> (description: String, success: Bool) {
+        if let p = await SensorService.currentBarometer() {
+            return (String(format: "当前气压约 %.1f hPa", p), true)
+        }
+        return ("当前设备没有气压计，无法读取气压", false)
+    }
+
+    /// 当前朝向（指南针，度 + 中文方位）。
+    private func readHeading() async -> (description: String, success: Bool) {
+        let heading: CLHeading?
+        if let cached = LocationService.shared.currentHeading {
+            heading = cached
+        } else {
+            heading = await LocationService.shared.awaitHeading()
+        }
+        if let heading {
+            let deg = heading.trueHeading >= 0 ? heading.trueHeading : heading.magneticHeading
+            return (String(format: "当前朝向：%@（%.0f°）", SensorService.headingDirection(deg), deg), true)
+        }
+        return ("无法读取朝向：需要位置权限，或设备没有指南针", false)
+    }
+
+    /// 今日步数（需「运动与健身」权限，首次调用会触发系统授权弹窗）。
+    private func readSteps() async -> (description: String, success: Bool) {
+        if let steps = await SensorService.stepsToday() {
+            return ("今日已走 \(steps) 步", true)
+        }
+        return ("无法读取步数：需要「运动与健身」权限（可到 设置 → 隐私 → 运动与健身 中开启）", false)
+    }
+
+    /// 电池电量与状态。
+    private func readBattery() async -> (description: String, success: Bool) {
+        let (level, state) = SensorService.batteryInfo()
+        return (String(format: "电池电量 %d%%（%@）", Int(level * 100), state), true)
+    }
+
+    /// 内存占用（本 App 与设备总量）。
+    private func readMemory() async -> (description: String, success: Bool) {
+        let (appMB, totalGB) = SensorService.memoryUsage()
+        return (String(format: "本 App 当前占用内存 %.0f MB；设备总内存 %.1f GB", appMB, totalGB), true)
+    }
+
+    /// 存储剩余空间。
+    private func readStorage() async -> (description: String, success: Bool) {
+        if let free = SensorService.freeStorageGB() {
+            return (String(format: "设备可用存储约 %.1f GB", free), true)
+        }
+        return ("无法读取存储信息", false)
+    }
+
+    /// 汇总所有可用传感器数据（海拔/气压/指南针/步数/电池/内存/存储）。
+    private func readAllSensors() async -> (description: String, success: Bool) {
+        let loc = LocationService.shared.currentLocation ?? await LocationService.shared.awaitLocation()
+        let heading = LocationService.shared.currentHeading ?? await LocationService.shared.awaitHeading()
+        let headingDeg = heading.map { $0.trueHeading >= 0 ? $0.trueHeading : $0.magneticHeading }
+        let snap = await SensorService.allSnapshot(altitude: loc?.altitude, headingDegrees: headingDeg)
+        if snap.isEmpty {
+            return ("传感器数据暂不可用，请检查相关权限", false)
+        }
+        let text = snap.sorted { $0.key < $1.key }
+            .map { "· \(SensorService.displayName(for: $0.key))：\($0.value)" }
+            .joined(separator: "\n")
+        return (text, true)
     }
 
     /// 从命令中解析出要打开的 URL / App scheme。
@@ -766,6 +877,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     private let manager = CLLocationManager()
 
     @Published var currentLocation: CLLocation?
+    /// 最近一次朝向（指南针，度）。仅系统操作工具请求时更新。
+    @Published var currentHeading: CLHeading?
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
 
     override init() {
@@ -785,6 +898,29 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         } else {
             requestPermission()
         }
+    }
+
+    /// 启动指南针（朝向）更新；已授权时生效。
+    func requestHeading() {
+        if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
+            manager.startUpdatingHeading()
+        }
+    }
+
+    /// 异步等待一次朝向数据（最多约 5 秒）。未授权时先请求定位权限。
+    func awaitHeading() async -> CLHeading? {
+        if authorizationStatus == .notDetermined {
+            requestPermission()
+        } else if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
+            manager.startUpdatingHeading()
+        } else {
+            return nil
+        }
+        for _ in 0..<10 {
+            if let h = currentHeading { return h }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return currentHeading
     }
 
     /// 异步等待一次定位结果（最多约 10 秒）。未授权时先弹权限请求。
@@ -813,6 +949,12 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         DispatchQueue.main.async {
             self.currentLocation = locations.last
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        DispatchQueue.main.async {
+            self.currentHeading = newHeading
         }
     }
 
