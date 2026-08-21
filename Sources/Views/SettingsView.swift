@@ -1,7 +1,18 @@
 import SwiftUI
+import UIKit
+import CoreLocation
+import CoreMotion
+import UserNotifications
+import AVFoundation
 
 struct SettingsView: View {
     @EnvironmentObject var settingsVM: SettingsViewModel
+
+    /// 系统权限状态文本（位置 / 运动与健身 / 麦克风 / 通知）
+    @State private var locationAuthText = "检测中…"
+    @State private var motionAuthText = "检测中…"
+    @State private var micAuthText = "检测中…"
+    @State private var notifAuthText = "检测中…"
 
     var body: some View {
         ZStack {
@@ -93,6 +104,35 @@ struct SettingsView: View {
                                 subtitle: "生成每个字时触发极短震动（可在安静环境关闭）",
                                 isOn: hapticBinding
                             )
+                        }
+                    }
+
+                    // 系统权限
+                    section(title: "系统权限") {
+                        VStack(spacing: 12) {
+                            Text("AI 调用传感器或系统操作前，都会先弹窗征求你的许可。这里可快速查看权限状态，点按任意一行前往系统设置管理。")
+                                .font(.system(size: 12))
+                                .foregroundColor(AppTheme.tertiaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            permissionRow(icon: "location.fill", title: "位置（海拔 / 指南针）", status: locationAuthText)
+                            Divider().background(AppTheme.divider)
+                            permissionRow(icon: "figure.walk", title: "运动与健身（步数 / 气压）", status: motionAuthText)
+                            Divider().background(AppTheme.divider)
+                            permissionRow(icon: "mic.fill", title: "麦克风（语音输入）", status: micAuthText)
+                            Divider().background(AppTheme.divider)
+                            permissionRow(icon: "bell.badge.fill", title: "通知（下载完成提醒）", status: notifAuthText)
+                            Divider().background(AppTheme.divider)
+                            Button {
+                                openSystemSettings()
+                            } label: {
+                                Label("打开系统设置，统一管理全部权限", systemImage: "gearshape.fill")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(AppTheme.accent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(AppTheme.accent.opacity(0.12))
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
                         }
                     }
 
@@ -270,6 +310,79 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showRuleGenerator) {
             WorkflowRuleGeneratorSheet()
+        }
+        .onAppear {
+            refreshPermissions()
+        }
+        // 从系统设置返回后自动刷新权限状态
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            refreshPermissions()
+        }
+    }
+
+    // MARK: - 系统权限状态
+
+    private func permissionRow(icon: String, title: String, status: String) -> some View {
+        Button {
+            openSystemSettings()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 15))
+                    .foregroundColor(AppTheme.accent)
+                    .frame(width: 26)
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(AppTheme.primaryText)
+                Spacer(minLength: 8)
+                Text(status)
+                    .font(.system(size: 12))
+                    .foregroundColor(status.contains("已授权") ? AppTheme.success
+                                    : (status.contains("拒绝") ? AppTheme.warning : AppTheme.tertiaryText))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11))
+                    .foregroundColor(AppTheme.tertiaryText)
+            }
+            .padding(.vertical, 2)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func refreshPermissions() {
+        // 位置
+        switch CLLocationManager().authorizationStatus() {
+        case .authorizedWhenInUse, .authorizedAlways: locationAuthText = "已授权"
+        case .denied, .restricted: locationAuthText = "已拒绝，点按前往设置"
+        default: locationAuthText = "未请求（AI 用到时询问）"
+        }
+        // 运动与健身（传感器：步数 / 气压）
+        switch CMMotionActivityManager.authorizationStatus() {
+        case .authorized: motionAuthText = "已授权"
+        case .denied: motionAuthText = "已拒绝，点按前往设置"
+        case .restricted: motionAuthText = "受限制"
+        default: motionAuthText = "未请求（AI 用到时询问）"
+        }
+        // 麦克风
+        switch AVAudioSession.sharedInstance().recordPermission {
+        case .granted: micAuthText = "已授权"
+        case .denied: micAuthText = "已拒绝，点按前往设置"
+        default: micAuthText = "未请求"
+        }
+        // 通知（异步查询）
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let text: String
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral: text = "已授权"
+            case .denied: text = "已拒绝，点按前往设置"
+            default: text = "未请求"
+            }
+            DispatchQueue.main.async { notifAuthText = text }
+        }
+    }
+
+    private func openSystemSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
         }
     }
 
