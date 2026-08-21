@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 import os
 
 // MARK: - 热更新管理器
