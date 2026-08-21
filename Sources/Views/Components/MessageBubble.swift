@@ -284,12 +284,20 @@ struct AttachmentView: View {
     @State private var cardHeight: CGFloat = 140
     /// 图片全屏预览
     @State private var showImagePreview = false
+    /// HTML 卡片全屏预览
+    @State private var showFullscreenHTML = false
+    @State private var fullscreenHTML: String? = nil
 
     var body: some View {
         attachmentContent
             .fullScreenCover(isPresented: $showImagePreview) {
                 if case .image(let url) = attachment {
                     FullScreenImageViewer(urlString: url, isPresented: $showImagePreview)
+                }
+            }
+            .fullScreenCover(isPresented: $showFullscreenHTML) {
+                if let html = fullscreenHTML {
+                    FullScreenHTMLViewer(html: html, isPresented: $showFullscreenHTML)
                 }
             }
     }
@@ -428,6 +436,20 @@ struct AttachmentView: View {
                     RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous)
                         .stroke(AppTheme.border.opacity(0.5), lineWidth: 0.5)
                 )
+                .overlay(alignment: .topTrailing) {
+                    // 全屏提示角标
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(AppTheme.tertiaryText)
+                        .padding(6)
+                        .background(Circle().fill(AppTheme.surface.opacity(0.6)))
+                        .padding(8)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius, style: .continuous))
+                .onTapGesture {
+                    fullscreenHTML = html
+                    showFullscreenHTML = true
+                }
 
         case .systemAction(_, let description):
             HStack(spacing: 10) {
@@ -513,6 +535,53 @@ struct FullScreenImageViewer: View {
     }
 }
 
+/// HTML 卡片全屏查看器：可滚动、可点击链接，样式与内联卡片一致
+struct FullScreenHTMLViewer: View {
+    let html: String
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            AppTheme.background.ignoresSafeArea()
+            FullScreenHTMLWebView(html: WebViewCard.wrapHTML(html))
+                .edgesIgnoringSafeArea(.all)
+                .padding(.top, 12)
+            Button {
+                isPresented = false
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundColor(.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.5), radius: 4)
+                    .padding(16)
+            }
+        }
+        .statusBarHidden()
+    }
+}
+
+/// 可交互的 WKWebView（全屏）：允许滚动与点击链接
+struct FullScreenHTMLWebView: UIViewRepresentable {
+    let html: String
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.isUserInteractionEnabled = true
+        wv.scrollView.isScrollEnabled = true
+        wv.scrollView.bounces = true
+        wv.backgroundColor = .clear
+        wv.isOpaque = false
+        wv.loadHTMLString(html, baseURL: nil)
+        return wv
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        uiView.loadHTMLString(html, baseURL: nil)
+    }
+}
+
 /// HTML 可视化卡片（圆角，WKWebView 渲染，带防御性错误处理）
 /// 加载失败时不暴露原始 HTML，统一降级为「该链接暂不支持预览」
 /// 支持内容高度自适应：加载完成后通过 JS 测量内容高度并回调
@@ -548,7 +617,8 @@ struct WebViewCard: UIViewRepresentable {
 
     /// 智能包装：模型输出完整 HTML 文档时直接使用（避免双重包裹）；
     /// 输出内容片段时包装成深色主题卡片，并注入统一样式。
-    private var wrappedHTML: String {
+    /// 抽出为静态方法，供全屏查看器复用，保证内联与全屏样式一致。
+    static func wrapHTML(_ html: String) -> String {
         let lower = html.lowercased()
         if lower.contains("<html") || lower.contains("<body") {
             return html
@@ -630,6 +700,8 @@ struct WebViewCard: UIViewRepresentable {
         </html>
         """
     }
+
+    private var wrappedHTML: String { Self.wrapHTML(html) }
 }
 
 /// 协调器：捕获加载失败事件 + 测量内容高度
