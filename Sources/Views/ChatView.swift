@@ -91,6 +91,16 @@ struct ChatView: View {
         } message: {
             Text("确定要清空当前对话的全部记录吗？此操作不可撤销。")
         }
+        // 系统操作许可弹窗：AI 调用「系统操作」工具（传感器/打开App/调亮度等）前必须征得用户同意
+        .alert("允许这个系统操作吗？", isPresented: Binding(
+            get: { chatVM.systemPermissionRequest != nil },
+            set: { if !$0 && chatVM.systemPermissionRequest != nil { chatVM.respondToPermission(granted: false) } }
+        ), presenting: chatVM.systemPermissionRequest) { request in
+            Button("不许可", role: .cancel) { chatVM.respondToPermission(granted: false) }
+            Button("允许") { chatVM.respondToPermission(granted: true) }
+        } message: { request in
+            Text("AI 想要：\(request.explanation)\n\n是否允许它执行这个操作？")
+        }
     }
 
     // MARK: - Top Bar
