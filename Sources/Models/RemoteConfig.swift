@@ -70,6 +70,12 @@ struct RemoteModelPart: Codable {
     var size: Int
 }
 
+/// 可热更新的「打开 App」scheme 别名条目（远程配置下发，新增 App 支持无需重装）
+struct AppSchemeConfig: Codable {
+    var name: String     // 显示名 / 关键词（如 "微信读书"、"Kwai"）
+    var scheme: String   // URL scheme，如 "weread://"
+}
+
 /// latest.json 完整结构。所有字段可选：缺失的字段沿用内置出厂默认值，
 /// 保证「旧配置新 App / 新配置旧 App」都能平滑解析，不会整体失败。
 struct RemoteConfig: Codable {
@@ -83,8 +89,10 @@ struct RemoteConfig: Codable {
     var features: [String: Bool]?   // 功能开关：key 见 FeatureKey
     var permissions: PermissionConfig?
     var systemPrompt: String?       // 覆盖内置 system prompt（nil 或空串 = 用内置）
+    var systemPromptSuffix: String? // 追加到（内置或远程）system prompt 尾部的要求/说明
     var tools: [String]?            // 可用工具白名单（缺省 = 全部内置工具）
     var models: [RemoteModelEntry]? // 远程模型目录（可选）
+    var appSchemes: [AppSchemeConfig]? // 扩展「打开 App」别名表（优先于内置表匹配）
 }
 
 /// 远程配置功能开关的键（与 latest.json features 对应）
