@@ -36,6 +36,9 @@ struct ModelManagementView: View {
                             .multilineTextAlignment(.center)
                     }
 
+                    // 完整性校验横幅
+                    verificationBanner
+
                     // 内置模型
                     ForEach(LocalModelCatalog.models) { model in
                         modelCard(model)
@@ -80,6 +83,34 @@ struct ModelManagementView: View {
         .toolbarBackground(AppTheme.background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        // 打开页面先检查已下载模型完整性（哈希对比，损坏自动删除显示为未下载）
+        .task {
+            await modelManager.verifyAllModels()
+        }
+    }
+
+    @ViewBuilder
+    private var verificationBanner: some View {
+        if modelManager.isVerifying || modelManager.verificationMessage != nil {
+            HStack(spacing: 8) {
+                if modelManager.isVerifying {
+                    ProgressView()
+                        .tint(AppTheme.accent)
+                    Text("正在校验模型完整性…")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppTheme.secondaryText)
+                } else if let msg = modelManager.verificationMessage {
+                    Text(msg)
+                        .font(.system(size: 12))
+                        .foregroundColor(msg.contains("损坏") ? AppTheme.warning : AppTheme.success)
+                }
+                Spacer()
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .background(AppTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
     }
 
     @ViewBuilder
