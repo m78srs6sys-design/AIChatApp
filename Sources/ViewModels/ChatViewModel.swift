@@ -162,9 +162,13 @@ final class ChatViewModel: ObservableObject {
         // 系统提示：工具/卡片等「相关功能」需同时开启 深度思考 + 联网附加 才可用
         // （缺少任一条件 → 不注入工具提示词 → AI 直接回答，不调用任何工具）
         // 热更新：远程 latest.json 可整体覆盖 systemPrompt（AppConfig.shared.systemPrompt）
+        // 或追加 systemPromptSuffix 约束（如「打开 App 必须写全名」）
         var systemPrompt: String? = nil
         if settings.onlineFeaturesEnabled && settings.deepThinking {
             var sp = AppConfig.shared.systemPrompt(remoteOverride: Self.builtinSystemPrompt()) ?? ""
+            if let suffix = AppConfig.shared.systemPromptSuffix(), !suffix.isEmpty {
+                sp += "\n\n" + suffix + "\n"
+            }
             let wf = Self.workflowPrompt(settings.workflows)
             if !wf.isEmpty { sp += "\n\n" + wf }
             systemPrompt = sp
@@ -487,7 +491,9 @@ final class ChatViewModel: ObservableObject {
                                                          name: displayName)]
                 return (att, "已获取定位：\(displayName)，纬度 \(String(format: "%.4f", loc.coordinate.latitude))，经度 \(String(format: "%.4f", loc.coordinate.longitude))")
             }
-            return ([], "无法获取定位（未授权或定位失败）。如需天气 / 周边信息，请直接告诉我城市名。")
+            // 带上具体原因，便于 AI 向用户解释（权限拒绝 / 信号弱 / 等待超时）
+            let err = LocationService.shared.lastErrorText ?? "未获取到定位结果"
+            return ([], "无法获取定位：\(err)。如需天气 / 周边信息，请直接告诉我城市名。")
 
         case "card":
             // 对话主 AI 只提供「内容描述」，由另一个 AI 独立生成 HTML，避免主 AI 直接输出代码污染回复
