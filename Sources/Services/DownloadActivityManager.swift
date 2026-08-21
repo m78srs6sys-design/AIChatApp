@@ -46,17 +46,20 @@ final class DownloadActivityManager {
         }
     }
 
-    // MARK: - 离线模型「生成回复」进度
+    // MARK: - 离线模型「生成回复」占用率
 
     private let inferenceId = "offline-inference"
+    /// 当前推理使用的模型名（兜底重建时使用）
+    private var activeInferenceModel = ""
 
-    /// 开始一个离线推理 Live Activity（锁屏 / 灵动岛显示「正在生成回复…」）
+    /// 开始一个离线推理 Live Activity（锁屏 / 灵动岛显示「正在加载/生成…」）
     func startInference(modelName: String) {
+        activeInferenceModel = modelName
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         guard inferenceActivities[inferenceId] == nil else { return }
         let attributes = ModelInferenceAttributes(modelName: modelName)
         let usage = SystemUsage.snapshot()
-        let state = ModelInferenceAttributes.ContentState(statusText: "正在生成回复…",
+        let state = ModelInferenceAttributes.ContentState(statusText: "正在加载/生成…",
                                                           usagePercent: usage.memory,
                                                           cpuPercent: usage.cpu,
                                                           tokens: 0,
@@ -72,6 +75,10 @@ final class DownloadActivityManager {
 
     /// 更新推理占用率（每约 2 秒调用一次；百分比 = 资源占用率，非生成进度）
     func updateInference(tokens: Int, cpuPercent: Double, memPercent: Double, statusText: String = "正在生成回复…") {
+        // 兜底：活动意外缺失时自动重建（如系统因负载回收了活动）
+        if inferenceActivities[inferenceId] == nil, !activeInferenceModel.isEmpty {
+            startInference(modelName: activeInferenceModel)
+        }
         guard let activity = inferenceActivities[inferenceId] else { return }
         let state = ModelInferenceAttributes.ContentState(statusText: statusText,
                                                           usagePercent: memPercent,
@@ -85,6 +92,7 @@ final class DownloadActivityManager {
 
     /// 结束推理 Live Activity（显示「回复完成」后自动消失）
     func endInference() {
+        activeInferenceModel = ""
         guard let activity = inferenceActivities[inferenceId] else { return }
         inferenceActivities[inferenceId] = nil
         let final = ModelInferenceAttributes.ContentState(statusText: "回复完成",
