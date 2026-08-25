@@ -24,6 +24,8 @@ final class ReleaseFetcher: ObservableObject {
     @Published var downloadProgress: Double = 0
     /// 最近一次检查/下载结果说明（设置页展示）
     @Published var lastResult: String = "尚未检查"
+    /// GitHub 下载代理前缀（如 https://ghproxy.com/），留空直连
+    @Published var proxyPrefix: String = ""
     /// 下载完成后的本地文件（用于分享/导出）
     @Published var downloadedURL: URL? = nil
 
@@ -47,12 +49,13 @@ final class ReleaseFetcher: ObservableObject {
         defer { isChecking = false }
 
         do {
-            guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases?per_page=30") else {
+            guard let url = proxiedURL("https://api.github.com/repos/\(owner)/\(repo)/releases?per_page=30") else {
                 lastResult = "更新地址无效"
                 return
             }
             var req = URLRequest(url: url)
             req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
             let (data, response) = try await URLSession.shared.data(for: req)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 lastResult = "无法连接更新服务器（HTTP \( (response as? HTTPURLResponse)?.statusCode ?? -1 )）"
@@ -78,7 +81,7 @@ final class ReleaseFetcher: ObservableObject {
                 ? "发现新版本 v\(latestBuild)，点击「下载 IPA」获取"
                 : "已是最新版本（v\(currentBuild)）"
         } catch {
-            lastResult = "检查更新失败：\(error.localizedDescription)"
+            lastResult = "检查更新失败：\(friendlyError(error))"
         }
     }
 
@@ -91,15 +94,55 @@ final class ReleaseFetcher: ObservableObject {
         return Int(cleaned)
     }
 
+    /// 对 GitHub URL 应用用户配置的代理前缀
+    private func proxiedURL(_ urlString: String) -> URL? {
+        let prefix = proxyPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        if prefix.isEmpty { return URL(string: urlString) }
+        let normalized = prefix.hasSuffix("/") ? prefix : prefix + "/"
+        return URL(string: normalized + urlString)
+    }
+
+    private var userAgent: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        return "AIChatApp/\(version)"
+    }
+
+    private func friendlyError(_ error: Error) -> String {
+        let ns = error as NSError
+        switch ns.code {
+        case NSURLErrorNotConnectedToInternet:
+            return "无网络连接"
+        case NSURLErrorTimedOut:
+            return "连接超时，建议检查网络或开启代理"
+        case NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost:
+            return "无法连接 GitHub，建议开启代理（在下方填入代理前缀）"
+        case NSURLErrorNetworkConnectionLost:
+            return "网络连接中断"
+        case NSURLErrorCancelled:
+            return "已取消"
+        default:
+            if ns.domain == NSURLErrorDomain {
+                return "\(error.localizedDescription)（可尝试开启代理）"
+            }
+            return error.localizedDescription
+        }
+    }
+
     // MARK: - 下载最新 IPA（带进度）
     @MainActor
     func downloadLatest() async {
-        guard let source = downloadURL, !isDownloading else { return }
+        guard let rawURL = downloadURL?.absoluteString, !isDownloading else { return }
+        guard let source = proxiedURL(rawURL) else {
+            lastResult = "下载地址无效"
+            return
+        }
         isDownloading = true
         downloadProgress = 0
         lastResult = "正在下载 v\(latestBuild)…"
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            var request = URLRequest(url: source)
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
             let delegate = DownloadDelegate(
                 onProgress: { [weak self] p in
                     Task { @MainActor in self?.downloadProgress = p }
@@ -109,7 +152,13 @@ final class ReleaseFetcher: ObservableObject {
                         if let localURL {
                             self?.finalizeDownload(from: localURL)
                         } else {
-                            self?.lastResult = "下载失败：\(error?.localizedDescription ?? "未知错误")"
+                            let msg: String
+                            if let err = error {
+                                msg = self?.friendlyError(err) ?? err.localizedDescription
+                            } else {
+                                msg = "未知错误"
+                            }
+                            self?.lastResult = "下载失败：\(msg)"
                         }
                         self?.session?.finishTasksAndInvalidate()
                         self?.session = nil
@@ -123,7 +172,7 @@ final class ReleaseFetcher: ObservableObject {
             config.timeoutIntervalForResource = 300
             let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
             self.session = session
-            session.downloadTask(with: source).resume()
+            session.downloadTask(with: request).resume()
         }
     }
 
