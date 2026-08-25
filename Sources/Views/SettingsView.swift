@@ -103,6 +103,12 @@ struct SettingsView: View {
                                 subtitle: "开启后，AI 可在需要时主动搜索、查天气、读网页、生成图片、操作设备",
                                 isOn: onlineFeaturesBinding
                             )
+                            Divider().background(AppTheme.divider)
+                            toggleRow(
+                                title: "模型联网搜索（内置）",
+                                subtitle: "请求携带 enable_search，由模型服务端直接联网检索（通义千问等支持），不再本地拉取搜索 API，更快更稳",
+                                isOn: modelWebSearchBinding
+                            )
                             if true {
                                 Divider().background(AppTheme.divider)
                                 toggleRow(
@@ -386,7 +392,7 @@ struct SettingsView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 8)
 
-                    Text("联网功能（搜索 / 图片生成 / 天气 / 网页摘要）已内置，使用公开免密钥接口，无需配置任何后端。")
+                    Text("联网搜索由模型服务端内置（enable_search）提供，图片生成 / 天气 / 网页摘要使用公开免密钥接口，无需配置任何后端。")
                         .font(.system(size: 12))
                         .foregroundColor(AppTheme.tertiaryText)
                         .multilineTextAlignment(.center)
@@ -522,6 +528,13 @@ struct SettingsView: View {
         Binding(
             get: { settingsVM.settings.onlineFeaturesEnabled },
             set: { settingsVM.settings.onlineFeaturesEnabled = $0; settingsVM.save() }
+        )
+    }
+
+    private var modelWebSearchBinding: Binding<Bool> {
+        Binding(
+            get: { settingsVM.settings.modelWebSearch },
+            set: { settingsVM.settings.modelWebSearch = $0; settingsVM.save() }
         )
     }
 
