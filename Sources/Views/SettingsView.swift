@@ -136,6 +136,24 @@ struct SettingsView: View {
                                 .foregroundColor(AppTheme.tertiaryText)
                                 .fixedSize(horizontal: false, vertical: true)
 
+                            // GitHub 下载代理（中国大陆网络可能需要）
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("GitHub 下载代理（可选）")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(AppTheme.secondaryText)
+                                TextField("留空则直连；示例 https://ghproxy.com/", text: githubProxyBinding)
+                                    .font(.system(size: 14))
+                                    .foregroundColor(AppTheme.primaryText)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                                    .background(AppTheme.inputBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                Text("如果「检查更新」正常但下载失败 / 超时，可填入代理前缀（注意以 / 结尾），所有 GitHub 下载会走该代理。")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(AppTheme.tertiaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
                             // 版本概览
                             HStack(spacing: 8) {
                                 Image(systemName: release.hasUpdate ? "arrow.down.circle.fill" : "checkmark.circle.fill")
@@ -165,6 +183,7 @@ struct SettingsView: View {
                             // 检查 / 下载按钮
                             HStack(spacing: 10) {
                                 Button {
+                                    release.proxyPrefix = settingsVM.settings.githubProxy
                                     Task { await release.checkForUpdate() }
                                 } label: {
                                     HStack(spacing: 6) {
@@ -182,6 +201,7 @@ struct SettingsView: View {
 
                                 if release.hasUpdate {
                                     Button {
+                                        release.proxyPrefix = settingsVM.settings.githubProxy
                                         Task {
                                             await release.downloadLatest()
                                             if release.downloadedURL != nil { showUpdateShare = true }
@@ -549,6 +569,13 @@ struct SettingsView: View {
         Binding(
             get: { settingsVM.settings.ttsEnabled },
             set: { settingsVM.settings.ttsEnabled = $0; settingsVM.save() }
+        )
+    }
+
+    private var githubProxyBinding: Binding<String> {
+        Binding(
+            get: { settingsVM.settings.githubProxy },
+            set: { settingsVM.settings.githubProxy = $0; settingsVM.save() }
         )
     }
 
