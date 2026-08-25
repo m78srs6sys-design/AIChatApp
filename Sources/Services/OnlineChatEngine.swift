@@ -133,6 +133,18 @@ final class OnlineChatEngine {
             }
         }
 
+        // 模型自带联网搜索：在 OpenAI 兼容接口（如通义千问 DashScope）的请求里加上
+        // enable_search:true，由「模型服务端」直接联网检索后回答实时问题（股价、天气、新闻等），
+        // 不再由 App 本地发起搜索 API 拉取，更快更稳。非兼容服务商通常会忽略该字段；
+        // 若遇到个别服务商不支持，可在「其他设置 → 模型联网搜索」中关闭。
+        if settings.modelWebSearch {
+            body["enable_search"] = true
+            body["search_options"] = [
+                "search_strategy": "agent",
+                "enable_source": false
+            ]
+        }
+
         return body
     }
 }
