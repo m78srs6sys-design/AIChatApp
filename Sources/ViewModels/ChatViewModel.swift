@@ -413,21 +413,9 @@ final class ChatViewModel: ObservableObject {
     private func executeCallWithResult(kind: String, content: String, settings: APISettings) async -> ([MessageAttachment], String) {
         switch kind {
         case "search":
-            var q = content
-            if let loc = lastLocation,
-               ["附近", "周边", "这里", "我的位置", "当前位置"].contains(where: { q.contains($0) }) {
-                q = "\(q)（\(loc.city)）"
-            }
-            if let results = try? await skillService.search(query: q, apiKey: settings.apiKey, baseURL: settings.apiURL), !results.isEmpty {
-                let text = results.prefix(3).map { "· \($0.title)：\($0.snippet ?? "")" }.joined(separator: "\n")
-                // 主动生成 HTML 卡片（独立 AI 渲染，失败回退原生搜索结果卡）
-                let spec = "搜索「\(content)」的实用结果汇总：\n\(results.prefix(4).map { "· 标题：\($0.title)\n  摘要：\($0.snippet ?? "")" }.joined(separator: "\n"))"
-                if let html = await generateCardHTML(spec: spec, settings: settings) {
-                    return ([.htmlCard(html: html)], "搜索「\(content)」结果：\n\(text)")
-                }
-                return ([.searchResults(results)], "搜索「\(content)」结果：\n\(text)")
-            }
-            return ([], "搜索「\(content)」未找到结果。")
+            // 本地搜索 API 拉取已移除：联网检索交由模型自带的 enable_search 完成（更快、更稳）。
+            // 若模型仍输出 <search> 标签，这里只回一条提示，引导其直接基于联网检索作答，不再发起本地请求。
+            return ([], "搜索请求「\(content)」：你已具备内置联网搜索能力，请直接基于模型联网检索的结果回答，无需等待本地检索。")
 
         case "weather":
             let locWords = ["我的位置", "附近", "当前位置", "这里", "周边", "定位"]
@@ -664,7 +652,6 @@ final class ChatViewModel: ObservableObject {
 
         【可用的工具（请原样复制此格式，只改内容部分）】
           <location/>
-          <search>查询词</search>
           <weather>城市名 或 我的位置</weather>
           <web>网页URL</web>
           <image>英文画面描述</image>
@@ -681,6 +668,10 @@ final class ChatViewModel: ObservableObject {
             - 每次调用 <system> 工具，系统都会先弹出中文确认框征求用户许可；若用户点了「不许可」，你会收到「用户没有许可」的反馈，此时请尊重用户意愿，不要再尝试该系统操作，改用不需要系统权限的方式回答或给出替代建议。
             - 遇到"我在哪/多高/现在几度（气压）/朝哪个方向/走了多少步/电量多少/内存存储够不够"等问题时，主动用 <system> 读取对应传感器数据来回答。
 
+        【联网搜索（模型自带）】
+        - 你已内置联网搜索能力，遇到实时性问题（股价、天气、最新新闻、实时数据、近期事件等）请直接回答，模型会在需要时自行联网检索；不要再输出 <search> 标签，也不要期待本地检索结果返回。
+        - 仅当你需要「读取某个具体网页的内容摘要」时才使用 <web> 标签；一般性的实时资讯检索交给模型自带联网搜索即可。
+
         【可视化卡片 <card>】
         - 位置 / 天气 / 网页 / 搜索结果 的工具结果会自动渲染成卡片，不要用 <card> 重复生成相同内容（否则会出现两张卡，很奇怪）。
         - 除工具结果外，请在更多场景主动使用 <card> 展示结构化信息：对比、清单、步骤教程、表格、时间线、数据汇总、行程规划、学习笔记、新闻要点、翻译结果、评分推荐、攻略等。
@@ -689,7 +680,7 @@ final class ChatViewModel: ObservableObject {
 
         【工作流程】
         1) 先在脑中判断用户真正需要什么信息。
-        2) 需要时按上面格式输出「一个」工具标签；可连续多次调用不同工具逐步完成，例如：先 <location/> 得到所在城市，再 <search>该城市 附近景点</search>，再 <weather>我的位置</weather>。
+        2) 需要时按上面格式输出「一个」工具标签；可连续多次调用不同工具逐步完成，例如：先 <location/> 得到所在城市，再 <weather>我的位置</weather>。实时资讯类问题直接回答即可（模型会自行联网检索）。
         3) 收集到足够信息后，停止输出任何标签，用自然语言给出最终回答并解释；需要的结果会自动以图片 / 卡片 / 附件形式展示。
 
         【红线（违反会导致功能失效）】
