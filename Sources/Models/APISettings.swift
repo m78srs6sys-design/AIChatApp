@@ -9,6 +9,7 @@ struct APISettings: Codable {
     var deepThinking: Bool           // 深度思考开关
     var deepThinkingField: DeepThinkingField  // 深度思考字段类型（兼容不同服务商）
     var onlineFeaturesEnabled: Bool  // 是否允许 AI 主动调用联网附加功能
+    var modelWebSearch: Bool         // 模型自带联网搜索（enable_search，由服务端检索，不再本地拉取搜索 API）
     var ttsEnabled: Bool             // 语音合成自动播放
     var hapticPerChar: Bool          // 生成每个字震动一次
     var liquidGlassEnabled: Bool     // 液态玻璃界面（毛玻璃质感，默认关闭）
@@ -21,6 +22,7 @@ struct APISettings: Codable {
          deepThinking: Bool = false,
          deepThinkingField: DeepThinkingField = .thinkingEnabled,
         onlineFeaturesEnabled: Bool = true,
+        modelWebSearch: Bool = true,
         ttsEnabled: Bool = false,
         hapticPerChar: Bool = false,
         liquidGlassEnabled: Bool = false,
@@ -32,6 +34,7 @@ struct APISettings: Codable {
         self.deepThinking = deepThinking
         self.deepThinkingField = deepThinkingField
         self.onlineFeaturesEnabled = onlineFeaturesEnabled
+        self.modelWebSearch = modelWebSearch
         self.ttsEnabled = ttsEnabled
         self.hapticPerChar = hapticPerChar
         self.liquidGlassEnabled = liquidGlassEnabled
@@ -41,7 +44,7 @@ struct APISettings: Codable {
     // 手写 Codable，保证旧版钥匙串数据（不含 workflows 字段）也能兼容解析、不会整体失败
     private enum CodingKeys: String, CodingKey {
         case apiURL, apiKey, modelName, engine, deepThinking, deepThinkingField
-        case onlineFeaturesEnabled, ttsEnabled, hapticPerChar, liquidGlassEnabled, workflows
+        case onlineFeaturesEnabled, modelWebSearch, ttsEnabled, hapticPerChar, liquidGlassEnabled, workflows
     }
 
     init(from decoder: Decoder) throws {
@@ -53,6 +56,7 @@ struct APISettings: Codable {
         deepThinking = try c.decodeIfPresent(Bool.self, forKey: .deepThinking) ?? false
         deepThinkingField = try c.decodeIfPresent(DeepThinkingField.self, forKey: .deepThinkingField) ?? .thinkingEnabled
         onlineFeaturesEnabled = try c.decodeIfPresent(Bool.self, forKey: .onlineFeaturesEnabled) ?? true
+        modelWebSearch = try c.decodeIfPresent(Bool.self, forKey: .modelWebSearch) ?? true
         ttsEnabled = try c.decodeIfPresent(Bool.self, forKey: .ttsEnabled) ?? false
         hapticPerChar = try c.decodeIfPresent(Bool.self, forKey: .hapticPerChar) ?? false
         liquidGlassEnabled = try c.decodeIfPresent(Bool.self, forKey: .liquidGlassEnabled) ?? false
@@ -68,6 +72,7 @@ struct APISettings: Codable {
         try c.encode(deepThinking, forKey: .deepThinking)
         try c.encode(deepThinkingField, forKey: .deepThinkingField)
         try c.encode(onlineFeaturesEnabled, forKey: .onlineFeaturesEnabled)
+        try c.encode(modelWebSearch, forKey: .modelWebSearch)
         try c.encode(ttsEnabled, forKey: .ttsEnabled)
         try c.encode(hapticPerChar, forKey: .hapticPerChar)
         try c.encode(liquidGlassEnabled, forKey: .liquidGlassEnabled)
@@ -275,7 +280,7 @@ struct WorkflowPreset: Codable, Identifiable, Hashable {
             WorkflowPreset(
                 name: "推荐景点",
                 trigger: "用户想找当地 / 附近好玩的地方、旅游景点、周末去哪玩",
-                steps: [ToolStep(tool: .location), ToolStep(tool: .search, param: "附近 好玩的景点推荐")]
+                steps: [ToolStep(tool: .location)]
             ),
             WorkflowPreset(
                 name: "天气咨询",
@@ -285,12 +290,12 @@ struct WorkflowPreset: Codable, Identifiable, Hashable {
             WorkflowPreset(
                 name: "周边美食",
                 trigger: "想找附近 / 当地好吃的、餐厅推荐",
-                steps: [ToolStep(tool: .location), ToolStep(tool: .search, param: "附近 美食 餐厅推荐")]
+                steps: [ToolStep(tool: .location)]
             ),
             WorkflowPreset(
                 name: "实时资讯",
-                trigger: "询问最新新闻、时事、实时 / 最新信息",
-                steps: [ToolStep(tool: .search, param: "最新的相关资讯")]
+                trigger: "询问最新新闻、时事、实时 / 最新信息（由模型内置联网搜索回答）",
+                steps: []
             ),
             WorkflowPreset(
                 name: "网页速览",
