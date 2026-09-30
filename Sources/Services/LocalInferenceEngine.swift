@@ -89,8 +89,7 @@ final class LocalInferenceEngine {
         // 批处理大小：prefill 一次喂更多 token，Metal 利用率更高
         ctxParams.n_batch = UInt32(min(2048, ctxSize))
         ctxParams.n_ubatch = UInt32(min(512, ctxSize))
-        // Flash Attention：prefill 更快、KV 显存更省
-        ctxParams.flash_attn = true
+        // Flash Attention 由 llama.cpp 按后端自动决定（默认 AUTO），无需显式设置
         // 线程数分开设置：
         // - 批处理（prefill）高度并行，给足线程
         ctxParams.n_threads_batch = Int32(min(8, max(2, cores)))
@@ -174,13 +173,13 @@ final class LocalInferenceEngine {
         // 至少保留最后一个 token 需要重新解码，保证一定有可用的 logits 可供采样
         keep = min(keep, max(0, tokens.count - 1))
         if keep < cachedTokens.count {
-            llama_kv_cache_seq_rm(context, 0, llama_pos(keep), -1)
+            _ = llama_memory_seq_rm(llama_get_memory(context), 0, llama_pos(keep), -1)
         }
         let newTokens = Array(tokens[keep...])
         if !newTokens.isEmpty {
             if decode(tokens: newTokens, context: context) != 0 {
                 // 上下文被写满等原因导致失败 → 清空缓存整体重来一次，保证可用性
-                llama_kv_cache_seq_rm(context, 0, 0, -1)
+                _ = llama_memory_seq_rm(llama_get_memory(context), 0, 0, -1)
                 cachedTokens = []
                 if decode(tokens: tokens, context: context) != 0 {
                     throw ChatError.inferenceFailed("prompt 解码失败")
