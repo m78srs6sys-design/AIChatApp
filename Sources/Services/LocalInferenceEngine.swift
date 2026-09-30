@@ -23,6 +23,12 @@ final class LocalInferenceEngine {
     /// 后台推理串行队列：加载/推理都在此执行，避免与 UI 线程竞争
     private let queue = DispatchQueue(label: "aichat.local.inference", qos: .userInitiated)
 
+    /// 已解码进 KV Cache 的 token 序列。跨轮次复用后，新一轮只需解码「新增的部分」，
+    /// 不再把整段对话历史重算一遍（长对话越聊越慢的根因就在这里）。
+    private var cachedTokens: [llama_token] = []
+    /// 上一次生成的实际吞吐（tokens/秒），便于排查性能
+    private(set) var lastTokensPerSecond: Double = 0
+
     private init() {}
 
     /// 是否已加载模型
@@ -55,6 +61,7 @@ final class LocalInferenceEngine {
         // 第一遍：尝试 GPU 全量 offload
         var modelParams = llama_model_default_params()
         modelParams.n_gpu_layers = 999  // 超出的层数会自动按剩余全部层处理
+        modelParams.use_mmap = true     // mmap 读取，省内存、加载更快
 
         var loadedModel = llama_model_load_from_file(path, modelParams)
         if loadedModel == nil {
@@ -68,17 +75,27 @@ final class LocalInferenceEngine {
         self.model = loadedModel
         self.usingGPU = modelParams.n_gpu_layers > 0
 
-        // 上下文窗口自适应压缩：KV Cache 占显存/内存大头，
-        // 4096 足够日常长对话，能显著降低内存压力、明显提速（尤其 7B 以上）
-        let ctxSize = min(max(2048, contextLength), 4096)
+        // 上下文窗口自适应压缩：KV Cache 是显存/内存大头。
+        // 7B + 8192 上下文在 iPhone 上会把内存吃满触发系统换页，速度会从几十 tok/s 掉到个位数。
+        // 按设备物理内存收窄：>=6GB 用 4096，否则 2048。
+        let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824.0
+        let ctxCap = ramGB >= 6.0 ? 4096 : 2048
+        let ctxSize = min(max(1024, contextLength), ctxCap)
+
+        let cores = ProcessInfo.processInfo.activeProcessorCount
 
         var ctxParams = llama_context_default_params()
         ctxParams.n_ctx = UInt32(ctxSize)
-        ctxParams.n_ctx = UInt32(contextLength)
-        // 线程数：GPU 卸载后 CPU 只做采样/剩余层，2~6 足够，避免线程风暴和 UI 抢核
-        let cores = ProcessInfo.processInfo.activeProcessorCount
-        ctxParams.n_threads = Int32(min(6, max(2, cores)))
-        ctxParams.n_threads_batch = ctxParams.n_threads
+        // 批处理大小：prefill 一次喂更多 token，Metal 利用率更高
+        ctxParams.n_batch = UInt32(min(2048, ctxSize))
+        ctxParams.n_ubatch = UInt32(min(512, ctxSize))
+        // Flash Attention：prefill 更快、KV 显存更省
+        ctxParams.flash_attn = true
+        // 线程数分开设置：
+        // - 批处理（prefill）高度并行，给足线程
+        ctxParams.n_threads_batch = Int32(min(8, max(2, cores)))
+        // - 逐 token 生成：GPU 卸载后 CPU 只处理少量逻辑，线程多了反而抢核、发热降频
+        ctxParams.n_threads = Int32(usingGPU ? min(4, max(2, cores)) : min(8, max(2, cores)))
 
         guard let ctx = llama_init_from_model(loadedModel, ctxParams) else {
             throw ChatError.inferenceFailed("推理上下文初始化失败")
@@ -86,16 +103,22 @@ final class LocalInferenceEngine {
         self.context = ctx
         self.vocab = llama_model_get_vocab(loadedModel)
         self.currentModelPath = path
+        self.cachedTokens = []
     }
 
     /// 卸载模型，释放内存
     func unload() {
-        if let context { llama_free(context) }
-        if let model { llama_model_free(model) }
+        if context != nil || model != nil {
+            if let context { llama_free(context) }
+            if let model { llama_model_free(model) }
+            llama_backend_free()
+        }
         context = nil
         model = nil
         vocab = nil
         currentModelPath = nil
+        cachedTokens = []
+        usingGPU = false
     }
 
     // MARK: - Stream Inference
@@ -109,22 +132,23 @@ final class LocalInferenceEngine {
         onToken: @escaping (String) -> Void,
         onUsage: ((Double, Double) -> Void)? = nil
     ) async throws {
-        guard let context, let vocab, model != nil else {
-            throw ChatError.noActiveModel
-        }
-
-        let prompt = buildPrompt(messages: messages)
-        var tokens = try tokenize(prompt: prompt, vocab: vocab)
-
-        // 防止历史过长导致解码失败：将 prompt 截断到上下文窗口内（保留最近内容）
-        let nCtx = Int(llama_n_ctx(context))
-        if tokens.count > nCtx - 64 {
-            tokens = Array(tokens.suffix(nCtx - 64))
-        }
-
+        // 分词也放进后台队列：长对话 prompt 分词有可观开销，别卡主线程
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
+                guard let context = self.context, let vocab = self.vocab, self.model != nil else {
+                    continuation.resume(throwing: ChatError.noActiveModel)
+                    return
+                }
                 do {
+                    let prompt = self.buildPrompt(messages: messages)
+                    var tokens = try self.tokenize(prompt: prompt, vocab: vocab)
+
+                    // 防止历史过长导致解码失败：将 prompt 截断到上下文窗口内（保留最近内容）
+                    let nCtx = Int(llama_n_ctx(context))
+                    if tokens.count > nCtx - 64 {
+                        tokens = Array(tokens.suffix(nCtx - 64))
+                    }
+
                     try self.runInferenceLoop(tokens: tokens, context: context, vocab: vocab,
                                               onToken: onToken, onUsage: onUsage)
                     continuation.resume()
@@ -141,10 +165,29 @@ final class LocalInferenceEngine {
                                   vocab: OpaquePointer,
                                   onToken: @escaping (String) -> Void,
                                   onUsage: ((Double, Double) -> Void)?) throws {
-        // 解码 prompt
-        if decode(tokens: tokens, context: context) != 0 {
-            throw ChatError.inferenceFailed("prompt 解码失败")
+        // ---- KV Cache 复用：只解码「相比上一轮新增」的 token ----
+        // 上一轮已经解码过的前缀仍然留在 KV Cache 里，直接复用；
+        // 从分歧点之后裁掉旧缓存，再只解码新增的一小段。
+        // 这样每轮的 prefill 只跟「本轮新增内容」成正比，而不是跟「整段历史」成正比。
+        let nCtx = Int(llama_n_ctx(context))
+        var keep = Self.commonPrefix(cachedTokens, tokens)
+        // 至少保留最后一个 token 需要重新解码，保证一定有可用的 logits 可供采样
+        keep = min(keep, max(0, tokens.count - 1))
+        if keep < cachedTokens.count {
+            llama_kv_cache_seq_rm(context, 0, llama_pos(keep), -1)
         }
+        let newTokens = Array(tokens[keep...])
+        if !newTokens.isEmpty {
+            if decode(tokens: newTokens, context: context) != 0 {
+                // 上下文被写满等原因导致失败 → 清空缓存整体重来一次，保证可用性
+                llama_kv_cache_seq_rm(context, 0, 0, -1)
+                cachedTokens = []
+                if decode(tokens: tokens, context: context) != 0 {
+                    throw ChatError.inferenceFailed("prompt 解码失败")
+                }
+            }
+        }
+        cachedTokens = tokens
 
         // 采样链：min_p + temperature + 随机分布采样（复用同一链条，创建一次）
         let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params())
@@ -167,7 +210,13 @@ final class LocalInferenceEngine {
         let flushCharThreshold = 64              // 或攒够 64 字符立即刷
         let usageInterval = 2_000_000_000        // 每 2 秒上报一次占用率
 
+        let startedAt = DispatchTime.now()
+        var generated = 0
+
         for _ in 0..<maxTokens {
+            // 上下文写满则收尾，避免 llama_decode 直接失败丢掉已生成内容
+            if cachedTokens.count >= nCtx - 2 { break }
+
             let newId = llama_sampler_sample(sampler, context, -1)
             if newId == llama_vocab_eos(vocab) { break }
 
@@ -178,8 +227,10 @@ final class LocalInferenceEngine {
                 pending += String(decoding: bytes, as: UTF8.self)
             }
 
-            // 继续解码
+            // 继续解码；生成的 token 也要记进缓存，下一轮才能接着复用
             singleToken[0] = newId
+            cachedTokens.append(newId)
+            generated += 1
             if decode(token: &singleToken, context: context) != 0 { break }
 
             let now = DispatchTime.now()
@@ -208,9 +259,20 @@ final class LocalInferenceEngine {
             pending = ""
             DispatchQueue.main.async { onToken(remainder) }
         }
+
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - startedAt.uptimeNanoseconds) / 1e9
+        lastTokensPerSecond = elapsed > 0 ? Double(generated) / elapsed : 0
     }
 
     // MARK: - Internal
+
+    /// 两个 token 序列的公共前缀长度（用于定位 KV Cache 可复用的位置）
+    private static func commonPrefix(_ a: [llama_token], _ b: [llama_token]) -> Int {
+        let n = min(a.count, b.count)
+        var i = 0
+        while i < n && a[i] == b[i] { i += 1 }
+        return i
+    }
 
     /// 分词：一次分配足够缓冲（token 数不会超过字节数），避免多次原地访问
     private func tokenize(prompt: String, vocab: OpaquePointer) throws -> [llama_token] {
